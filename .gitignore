@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+._*
+
+# IDE
+.obsidian/
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# Notes (if you want to exclude)
+# notes/
