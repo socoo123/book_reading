@@ -1,1894 +1,406 @@
-# 第十二章：二叉搜索树（Binary Search Trees）——深度详解版
+# 第十二章：二叉搜索树（Binary Search Trees）
 
-> 二叉搜索树是计算机科学中最优雅、最重要的数据结构之一。它将数据的组织与高效的查找完美结合，支持有序数据的存储与检索，是平衡二叉搜索树、AVL树、红黑树等高级数据结构的基础。
-
----
-
-## 一、为什么需要二叉搜索树？
-
-### 1.1 数组查找的局限性
-
-在讨论二叉搜索树之前，让我们回顾一下各种数据结构的查找效率：
-
-| 数据结构 | 查找时间 | 插入时间 | 删除时间 | 有序支持 |
-|---------|---------|---------|---------|---------|
-| 无序数组 | O(n) | O(1) | O(n) | 否 |
-| 有序数组 | O(log n) | O(n) | O(n) | 是 |
-| 链表 | O(n) | O(1) | O(n) | 否 |
-| 哈希表 | O(1) 平均 | O(1) 平均 | O(1) 平均 | 否 |
-| **二叉搜索树** | **O(log n)** | **O(log n)** | **O(log n)** | **是** |
-
-**问题**：有序数组支持二分查找，但插入和删除需要移动大量元素（O(n)）。
-
-```mermaid
-flowchart LR
-    subgraph InsertProblem
-    A["Array"] --> B["Insert 4"]
-    B --> C["Find Position Index 2"]
-    C --> D["Shift Elements"]
-    D --> E["Insert Complete"]
-
-    style C fill:#ffff99,stroke:#333
-    style D fill:#ff9999,stroke:#333
-    end
-```
-
-**插入 4 的代价**：
-- 查找位置：O(log n)
-- 移动元素：O(n)
-- **总代价：O(n)**
-
-### 1.2 链表的局限
-
-**链表的查找**：必须从头到尾遍历
-
-```java
-// 链表查找
-Node current = head;
-while (current != null && current.value != target) {
-    current = current.next;
-}
-// 最坏情况：O(n)
-```
-
-### 1.3 二叉搜索树的突破
-
-**二叉搜索树的设计目标**：
-- 查找：O(log n)
-- 插入：O(log n)
-- 删除：O(log n)
-- 支持有序数据：范围查询、前驱后继
-
-```mermaid
-flowchart TD
-    subgraph BSTCoreIdea
-    A["Search Target 7"] --> B["Root 8<br/>Go Left"]
-    B --> C["Node 3<br/>Go Right"]
-    C --> D["Node 6<br/>Go Right"]
-    D --> E["Node 7<br/>Found"]
-
-    style A fill:#99ffff,stroke:#333
-    style E fill:#99ff99,stroke:#333
-    end
-```
-
-**查找过程**：每次比较都排除一半的节点！
-
-```
-n 个节点的树 → 第一次排除一半 → 剩余 n/2
-            → 第二次排除一半 → 剩余 n/4
-            → ...
-            → 第 k 次：剩余 n/2^k
-
-当 n/2^k = 1 时，k = log₂n
-```
+> **定位**：二叉搜索树（BST）用「左子树 < 根 < 右子树」的性质把**有序数据**组织成链式结构，让查找/插入/删除都做到 Θ(h)（h 为树高）。它填补了「有序数组（查找 Θ(lg n) 但插入 Θ(n)）」与「哈希表（插入 Θ(1) 但不支持顺序）」之间的空白——**既支持高效动态操作，又天然有序**。
+> **致命弱点**：BST 的高度 h 依赖插入顺序。平衡时 h = Θ(lg n)；最坏退化为链表 h = Θ(n)。这正是第 13 章**红黑树**要解决的问题（强制平衡，保证 h = O(lg n)）。
+> **前后指针**：节点表示沿用第 10 章（p/left/right 三指针）；中序遍历有序性是 BST 的灵魂，第 13 章红黑树、第 18 章 B 树都建立在 BST 之上。
+>
+> 对照第四版书页 289–308。
 
 ---
 
-## 二、二叉搜索树的定义与性质
+## 一、BST 性质与中序遍历（§12.1）
 
-### 2.1 二叉搜索树的定义
+### 1.1 性质
 
-**二叉搜索树（Binary Search Tree，BST）** 是一种二叉树，其中每个节点都满足以下性质：
+对任意节点 x：
+- 左子树所有节点的 key **≤** x.key；
+- 右子树所有节点的 key **≥** x.key。
+
+> 严格 BST（key 互异）用 `<` / `>`。这条性质递归成立：左右子树本身也是 BST。
+
+### 1.2 中序遍历有序（BST 的灵魂）
+
+```
+INORDER-TREE-WALK(x)              // CLRS 1-indexed
+1  if x != NIL
+2      INORDER-TREE-WALK(x.left)
+3      print x.key                // 访问发生在「中间」
+4      INORDER-TREE-WALK(x.right)
+```
+
+> **定理**：BST 的中序遍历产出**升序**序列。这是「BST = 有序」的形式化体现，也是验证 BST（LC 98）、找前驱后继、范围查询的基础。遍历整树 Θ(n)。
 
 ```mermaid
 flowchart TD
-    subgraph BSTDefinition
-    A["Binary Search Tree"] --> B["Left Subtree<br/>All nodes < current"]
-    A --> C["Right Subtree<br/>All nodes > current"]
-    A --> D["Left and Right<br/>are also BST"]
+    R(("8")) --> L(("3"))
+    R --> RR(("10"))
+    L --> LL(("1"))
+    L --> LR(("6"))
+    LR --> LRR(("7"))
+    RR --> RRL(("13"))
+    RR --> RRR(("14"))
 
-    E["Formal Definition"] --> F["For any node x<br/>Left <= x <= Right"]
-    end
-
-    style A fill:#ffff99,stroke:#333
-    style E fill:#99ffff,stroke:#333
+    classDef n fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    classDef rt fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    class R rt
+    class L,LL,LR,LRR,RR,RRL,RRR n
 ```
 
-**数学定义**：
-
-对于二叉搜索树中的任意节点 x：
-
-```
-∀y ∈ left_subtree(x): y.key < x.key
-∀y ∈ right_subtree(x): y.key > x.key
-```
-
-### 2.2 BST 的性质
-
-#### 2.2.1 中序遍历的有序性
-
-**性质**：对二叉搜索树进行中序遍历，得到的节点序列是有序的。
-
-```mermaid
-flowchart TD
-    subgraph InorderExample
-    A["BST"] --> B["Root 8<br/>Left: 3-1-6-7<br/>Right: 10-13-14"]
-
-    B --> C["Traverse Left<br/>1 3 6 7"]
-    B --> D["Visit Root<br/>8"]
-    B --> E["Traverse Right<br/>10 13 14"]
-
-    C --> F["Sorted Result"]
-    D --> F
-    E --> F
-
-    F["1 3 6 7 8 10 13 14"]
-
-    style F fill:#99ff99,stroke:#333
-    end
-```
-
-**代码验证**：
-
-```java
-// 中序遍历验证有序性
-void inorderTraversal(TreeNode root, List<Integer> result) {
-    if (root == null) return;
-    inorderTraversal(root.left, result);
-    result.add(root.val);  // 结果自然有序
-    inorderTraversal(root.right, result);
-}
-```
-
-#### 2.2.2 查找路径的唯一性
-
-**性质**：在二叉搜索树中，查找任意节点的路径是唯一的。
-
-```mermaid
-flowchart TD
-    subgraph SearchPathUniqueness
-    A["Search 7"] --> B["Path: 8 -> 3 -> 6 -> 7"]
-    C["Search 7 Again"] --> D["Same Path<br/>8 -> 3 -> 6 -> 7"]
-    end
-```
-
-#### 2.2.3 最小值和最大值的位置
-
-**性质**：
-- 最小值：最左边的节点
-- 最大值：最右边的节点
-
-```mermaid
-flowchart LR
-    subgraph MinMaxPosition
-    Min["Minimum"] -->|"Leftmost Node"| MinNode["Node 1"]
-    Max["Maximum"] -->|"Rightmost Node"| MaxNode["Node 14"]
-
-    Tree["Tree Structure"] --> Root["8"]
-    Root --> L3["3"]
-    Root --> R10["10"]
-    L3 --> L1["1"]
-    L3 --> L6["6"]
-    L6 --> L7["7"]
-    R10 --> R13["13"]
-    R10 --> R14["14"]
-
-    MinNode -.-> Min
-    MaxNode -.-> Max
-
-    style MinNode fill:#99ff99,stroke:#333
-    style MaxNode fill:#99ff99,stroke:#333
-    end
-```
-
-### 2.3 BST 的结构特点
-
-```mermaid
-flowchart TD
-    subgraph NodeStructure
-    Node["TreeNode"] --> K["key: Key Value"]
-    Node --> V["value: Data"]
-    Node --> L["left: Left Child"]
-    Node --> R["right: Right Child"]
-    Node --> P["parent: Parent Node (Optional)"]
-    end
-
-    style Node fill:#ffff99,stroke:#333
-```
-
-**Java 实现节点类**：
-
-```java
-/**
- * 二叉搜索树节点
- */
-public class TreeNode {
-    public int key;           // 键（用于比较和定位）
-    public Object value;      // 值（存储的数据）
-    public TreeNode left;     // 左子节点
-    public TreeNode right;    // 右子节点
-    public TreeNode parent;   // 父节点（可选，用于某些操作）
-
-    public TreeNode(int key, Object value) {
-        this(key, value, null, null, null);
-    }
-
-    public TreeNode(int key, Object value, TreeNode left, TreeNode right) {
-        this(key, value, left, right, null);
-    }
-
-    public TreeNode(int key, Object value, TreeNode left, TreeNode right, TreeNode parent) {
-        this.key = key;
-        this.value = value;
-        this.left = left;
-        this.right = right;
-        this.parent = parent;
-    }
-
-    /**
-     * 判断是否为叶子节点
-     */
-    public boolean isLeaf() {
-        return left == null && right == null;
-    }
-
-    /**
-     * 判断是否有两个子节点
-     */
-    public boolean hasTwoChildren() {
-        return left != null && right != null;
-    }
-
-    /**
-     * 判断是否为左子节点
-     */
-    public boolean isLeftChild() {
-        return parent != null && parent.left == this;
-    }
-
-    /**
-     * 判断是否为右子节点
-     */
-    public boolean isRightChild() {
-        return parent != null && parent.right == this;
-    }
-
-    @Override
-    public String toString() {
-        return "TreeNode{key=" + key + ", value=" + value + "}";
-    }
-}
-```
+中序遍历：`1 3 6 7 8 10 13 14`（升序）。
 
 ---
 
-## 三、BST 的核心操作
+## 二、查询操作（§12.2）
 
-### 3.1 查找操作（Search）
+所有查询都 Θ(h)（h 为树高）。
 
-#### 3.1.1 查找的思路
-
-从根节点开始，将目标值与当前节点比较：
-- 相等：找到，返回节点
-- 小于：递归查找左子树
-- 大于：递归查找右子树
-
-```mermaid
-flowchart TD
-    subgraph SearchFlowchart
-    A["Search key"] --> B["current = root"]
-    B --> C{"current is null?"}
-    C -->|Yes| D["Return null<br/>Not Found"]
-    C -->|No| E{"key == current.key?"}
-    E -->|Yes| F["Return current<br/>Found"]
-    E -->|No| G{"key < current.key?"}
-    G -->|Yes| H["current = current.left"]
-    G -->|No| I["current = current.right"]
-    H --> C
-    I --> C
-
-    style A fill:#99ffff,stroke:#333
-    style D fill:#ff9999,stroke:#333
-    style F fill:#99ff99,stroke:#333
-    end
-```
-
-#### 3.1.2 递归实现
-
-```java
-/**
- * 递归查找
- * @param root 树的根节点
- * @param key 要查找的键
- * @return 找到返回节点，否则返回 null
- */
-public TreeNode searchRecursive(TreeNode root, int key) {
-    // 基础情况 1：空树或找到节点
-    if (root == null || root.key == key) {
-        return root;
-    }
-
-    // 递归情况：根据比较结果选择子树
-    if (key < root.key) {
-        return searchRecursive(root.left, key);  // 在左子树查找
-    } else {
-        return searchRecursive(root.right, key); // 在右子树查找
-    }
-}
-```
-
-#### 3.1.3 迭代实现
-
-```java
-/**
- * 迭代查找（更推荐，避免栈溢出）
- * @param root 树的根节点
- * @param key 要查找的键
- * @return 找到返回节点，否则返回 null
- */
-public TreeNode searchIterative(TreeNode root, int key) {
-    TreeNode current = root;
-
-    while (current != null) {
-        if (key == current.key) {
-            return current;  // 找到
-        } else if (key < current.key) {
-            current = current.left;  // 向左
-        } else {
-            current = current.right; // 向右
-        }
-    }
-
-    return null;  // 未找到
-}
-```
-
-#### 3.1.4 查找示例
-
-```mermaid
-flowchart TD
-    subgraph Search7
-    A["Search 7"] --> B["root=8<br/>7 < 8<br/>Go Left"]
-    B --> C["node=3<br/>7 > 3<br/>Go Right"]
-    C --> D["node=6<br/>7 > 6<br/>Go Right"]
-    D --> E["node=7<br/>7 == 7<br/>Found"]
-
-    style E fill:#99ff99,stroke:#333
-    end
-```
-
-```mermaid
-flowchart TD
-    subgraph Search4
-    F["Search 4"] --> G["root=8<br/>4 < 8<br/>Go Left"]
-    G --> H["node=3<br/>4 > 3<br/>Go Right"]
-    H --> I["node=6<br/>4 < 6<br/>Go Left"]
-    I --> J["node=5<br/>4 < 5<br/>Go Left"]
-    J --> K["node=null<br/>Not Found"]
-
-    style K fill:#ff9999,stroke:#333
-    end
-```
-
-### 3.2 插入操作（Insert）
-
-#### 3.2.1 插入的思路
-
-1. 查找插入位置（与查找操作类似）
-2. 将新节点作为叶子节点插入
-
-```mermaid
-flowchart TD
-    subgraph InsertFlow
-    A["Insert key"] --> B["Tree empty?"]
-    B -->|Yes| C["Create root node"]
-    B -->|No| D["Find position"]
-
-    D --> E{"Same key exists?"}
-    E -->|Yes| F["Update value"]
-    E -->|No| G["Find empty spot"]
-    G --> H["Create new node<br/>as leaf"]
-
-    style C fill:#99ff99,stroke:#333
-    style H fill:#99ff99,stroke:#333
-    style F fill:#ffff99,stroke:#333
-    end
-```
-
-#### 3.2.2 完整实现
-
-```java
-/**
- * 二叉搜索树实现
- */
-public class BinarySearchTree {
-    private TreeNode root;  // 根节点
-    private int size;       // 节点数量
-
-    public BinarySearchTree() {
-        this.root = null;
-        this.size = 0;
-    }
-
-    /**
-     * 插入节点
-     * @param key 键
-     * @param value 值
-     * @return 如果 key 已存在返回旧值，否则返回 null
-     */
-    public Object insert(int key, Object value) {
-        // 空树：直接作为根节点
-        if (root == null) {
-            root = new TreeNode(key, value);
-            size++;
-            return null;
-        }
-
-        TreeNode current = root;
-        TreeNode parent = null;
-
-        // 查找插入位置
-        while (current != null) {
-            parent = current;
-            if (key == current.key) {
-                // 键已存在，更新值
-                Object oldValue = current.value;
-                current.value = value;
-                return oldValue;
-            } else if (key < current.key) {
-                current = current.left;
-            } else {
-                current = current.right;
-            }
-        }
-
-        // 创建新节点
-        TreeNode newNode = new TreeNode(key, value);
-
-        // 连接父节点
-        if (key < parent.key) {
-            parent.left = newNode;
-        } else {
-            parent.right = newNode;
-        }
-        newNode.parent = parent;
-
-        size++;
-        return null;
-    }
-
-    /**
-     * 插入节点的递归版本
-     */
-    public void insertRecursive(int key, Object value) {
-        root = insertRecursive(root, key, value);
-    }
-
-    private TreeNode insertRecursive(TreeNode node, int key, Object value) {
-        if (node == null) {
-            size++;
-            return new TreeNode(key, value);
-        }
-
-        if (key == node.key) {
-            node.value = value;  // 更新
-        } else if (key < node.key) {
-            node.left = insertRecursive(node.left, key, value);
-        } else {
-            node.right = insertRecursive(node.right, key, value);
-        }
-
-        return node;
-    }
-}
-```
-
-#### 3.2.3 插入示例
-
-```mermaid
-flowchart LR
-    subgraph InsertProcess
-    A["Insert 4"] --> B["Current Tree"]
-    B --> C["Start from 8<br/>4 < 8 -> Left"]
-    C --> D["Node 3<br/>4 > 3 -> Right"]
-    D --> E["Node 6<br/>4 < 6 -> Left"]
-    E --> F["Left is null<br/>Insert 4"]
-
-    G["Result Tree"] --> H["8"]
-    H --> I["3"]
-    H --> J["10"]
-    I --> K["1"]
-    I --> L["6"]
-    L --> M["4"]
-    L --> N["7"]
-    J --> O["13"]
-    J --> P["14"]
-
-    style F fill:#99ff99,stroke:#333
-    end
-```
-
-### 3.3 删除操作（Delete）
-
-#### 3.3.1 删除的三种情况
-
-删除操作是最复杂的，需要处理三种情况：
-
-```mermaid
-flowchart TD
-    subgraph DeleteCases
-    A["Delete node z"] --> B["z is leaf"]
-    A --> C["z has one child"]
-    A --> D["z has two children"]
-
-    B --> E["Remove directly<br/>set parent pointer null"]
-    C --> F["Child replaces z<br/>parent connects child"]
-    D --> G["Find successor<br/>successor replaces z<br/>delete successor"]
-
-    style B fill:#99ff99,stroke:#333
-    style C fill:#99ff99,stroke:#333
-    style D fill:#ffff99,stroke:#333
-    end
-```
-
-#### 3.3.2 情况一：删除叶子节点
-
-```mermaid
-flowchart LR
-    subgraph DeleteLeaf
-    A["Delete 1"] --> B["1 is leaf<br/>no children"]
-    B --> C["Parent 3 left<br/>pointer set null"]
-    C --> D["Done<br/>Tree updated"]
-
-    style A fill:#99ffff,stroke:#333
-    style D fill:#99ff99,stroke:#333
-    end
-```
-
-**代码实现**：
-
-```java
-/**
- * 删除叶子节点
- */
-private void deleteLeaf(TreeNode z) {
-    if (z.parent == null) {
-        // 删除的是根节点且根是叶子
-        root = null;
-    } else if (z.isLeftChild()) {
-        z.parent.left = null;
-    } else {
-        z.parent.right = null;
-    }
-}
-```
-
-#### 3.3.3 情况二：删除有一个子节点的节点
-
-```mermaid
-flowchart LR
-    subgraph DeleteOneChild
-    A["Delete 3"] --> B["3 has child 6"]
-    B --> C["6 replaces 3<br/>8 left points to 6"]
-    C --> D["Done"]
-
-    style A fill:#99ffff,stroke:#333
-    style D fill:#99ff99,stroke:#333
-    end
-```
-
-**代码实现**：
-
-```java
-/**
- * 删除有一个子节点的节点
- */
-private void deleteNodeWithOneChild(TreeNode z) {
-    TreeNode child = (z.left != null) ? z.left : z.right;
-
-    if (z.parent == null) {
-        // z 是根节点
-        root = child;
-        child.parent = null;
-    } else if (z.isLeftChild()) {
-        z.parent.left = child;
-        child.parent = z.parent;
-    } else {
-        z.parent.right = child;
-        child.parent = z.parent;
-    }
-}
-```
-
-#### 3.3.4 情况三：删除有两个子节点的节点
-
-**策略**：找到后继节点，用后继节点的值替代被删除节点，然后删除后继节点。
-
-```mermaid
-flowchart TD
-    subgraph DeleteTwoChildren
-    A["Delete 8"] --> B["8 has two children<br/>Left: 3, Right: 10"]
-    B --> C["Find successor<br/>Min in right subtree<br/>Node 10"]
-
-    style C fill:#ffff99,stroke:#333
-    end
-```
-
-**正确做法**：
-
-```mermaid
-flowchart TD
-    subgraph CorrectApproach
-    A["Correct Approach"] --> B["Use successor 10<br/>Replace 8 value"]
-    B --> C["Delete successor 10<br/>10 has one child 13"]
-    C --> D["Case 2<br/>13 replaces 10"]
-
-    style A fill:#99ffff,stroke:#333
-    style B fill:#ffff99,stroke:#333
-    end
-```
-
-**后继节点的定义**：
+### 2.1 查找 TREE-SEARCH
 
 ```
-中序遍历中，z 后面紧跟的节点称为 z 的后继
-
-情况 1：z 有右子树 → 后继是右子树的最小值
-情况 2：z 无右子树，但有父节点 → 后继是最近的祖先（该祖先的左子树包含 z）
+TREE-SEARCH(x, k)                 ITERATIVE-TREE-SEARCH(x, k)
+1  if x == NIL or k == x.key      1  while x != NIL and k != x.key
+2      return x                    2      if k < x.key
+3  if k < x.key                    3          x = x.left
+4      return TREE-SEARCH(x.left, k) 4      else x = x.right
+5  else return TREE-SEARCH(x.right, k) 5  return x
 ```
 
-**代码实现**：
+> 递归版优雅，迭代版省栈，实战用迭代。沿一条路径下降，每层一次比较。
 
-```java
-/**
- * 删除有两个子节点的节点
- * 策略：用后继节点替代，然后删除后继
- */
-private void deleteNodeWithTwoChildren(TreeNode z) {
-    // 找到后继节点（右子树的最小值）
-    TreeNode successor = findMin(z.right);
-    TreeNode successorParent = successor.parent;
+### 2.2 最小 / 最大
 
-    // 用后继的值替代 z
-    z.key = successor.key;
-    z.value = successor.value;
-
-    // 删除后继节点
-    if (successor.hasTwoChildren()) {
-        // 理论上后继不可能有两个子节点（因为它是子树最小值）
-        throw new IllegalStateException("后继节点不应该有两个子节点");
-    } else if (successorParent.left == successor) {
-        successorParent.left = successor.right;
-        if (successor.right != null) {
-            successor.right.parent = successorParent;
-        }
-    } else {
-        successorParent.right = successor.right;
-        if (successor.right != null) {
-            successor.right.parent = successorParent;
-        }
-    }
-}
+```
+TREE-MINIMUM(x)                   TREE-MAXIMUM(x)
+1  while x.left != NIL            1  while x.right != NIL
+2      x = x.left                 2      x = x.right
+3  return x                       3  return x
 ```
 
-#### 3.3.5 完整的删除方法
+最小 = 一路向左到底；最大 = 一路向右到底。
 
-```java
-/**
- * 删除节点
- * @param key 要删除的键
- * @return 如果找到并删除返回 true，否则返回 false
- */
-public boolean delete(int key) {
-    TreeNode z = searchIterative(root, key);
-    if (z == null) {
-        return false;  // 未找到
-    }
+### 2.3 后继 TREE-SUCCESSOR（删除要用）
 
-    deleteNode(z);
-    size--;
-    return true;
-}
+节点 x 的后继 = 中序遍历中 x 的下一个节点（比 x 大的最小节点）。
 
-/**
- * 删除指定节点
- */
-private void deleteNode(TreeNode z) {
-    if (z.left == null && z.right == null) {
-        // 情况 1：叶子节点
-        deleteLeaf(z);
-    } else if (z.left == null || z.right == null) {
-        // 情况 2：有一个子节点
-        deleteNodeWithOneChild(z);
-    } else {
-        // 情况 3：有两个子节点
-        deleteNodeWithTwoChildren(z);
-    }
-}
-
-/**
- * 查找最小节点
- */
-private TreeNode findMin(TreeNode node) {
-    while (node.left != null) {
-        node = node.left;
-    }
-    return node;
-}
-
-/**
- * 查找最大节点
- */
-private TreeNode findMax(TreeNode node) {
-    while (node.right != null) {
-        node = node.right;
-    }
-    return node;
-}
 ```
+TREE-SUCCESSOR(x)
+1  if x.right != NIL                       // 情况 1：有右子树
+2      return TREE-MINIMUM(x.right)        //   → 右子树的最小值
+3  y = x.p                                 // 情况 2：无右子树
+4  while y != NIL and x == y.right         //   → 沿父链上行，直到 x 是某祖先的左孩子
+5      x = y
+6      y = y.p
+7  return y
+```
+
+- **情况 1**：x 有右子树 → 后继是右子树最左节点。
+- **情况 2**：x 无右子树 → 后继是「**最低祖先** y，且 x 落在 y 的左子树中」。沿父链向上走，直到第一次「从左孩子侧上来」。
+
+前驱 TREE-PREDECESSOR 完全对称（左子树最大 / 否则最低祖先且 x 在其右子树）。
+
+> **习题 12.2-5**：有两个孩子的节点，其后继**一定没有左孩子**（因为后继是右子树的最小，而最小一路向左，终点无左孩子）。
 
 ---
 
-## 四、树的遍历
+## 三、插入与删除（§12.3）
 
-### 4.1 四种遍历方式
+### 3.1 插入 TREE-INSERT
 
-```mermaid
-flowchart TD
-    subgraph TraversalComparison
-    A["Preorder<br/>Root Left Right"] --> B["8 3 1 6 7 10 13 14"]
-    C["Inorder<br/>Left Root Right"] --> D["1 3 6 7 8 10 13 14"]
-    E["Postorder<br/>Left Right Root"] --> F["1 7 6 3 13 14 10 8"]
-    G["Level Order<br/>By Level"] --> H["8 3 10 1 6 13 14 7"]
-    end
+沿搜索路径找到一个空位，把新节点作为叶子挂上去。
+
+```
+TREE-INSERT(T, z)
+1  y = NIL
+2  x = T.root
+3  while x != NIL
+4      y = x
+5      if z.key < x.key
+6          x = x.left
+7      else x = x.right
+8  z.p = y
+9  if y == NIL                // 原树为空
+10     T.root = z
+11 elseif z.key < y.key
+12     y.left = z
+13 else y.right = z
 ```
 
-### 4.2 前序遍历（Preorder Traversal）
+插入 Θ(h)（一路下降到叶子）。
 
-**顺序**：根 → 左 → 右
+### 3.2 删除 TREE-DELETE（核心难点）
 
-```java
-/**
- * 前序遍历：根 → 左 → 右
- */
-public void preorderTraversal(TreeNode root) {
-    if (root == null) return;
+删除要分情况处理。CLRS 用 **TRANSPLANT** 子过程把「用子树 v 替换子树 u（含 u.p 的孩子指针更新）」统一起来：
 
-    System.out.print(root.key + " ");  // 访问根
-    preorderTraversal(root.left);      // 遍历左子树
-    preorderTraversal(root.right);     // 遍历右子树
-}
-
-/**
- * 前序遍历：非递归实现
- */
-public List<Integer> preorderIterative(TreeNode root) {
-    List<Integer> result = new ArrayList<>();
-    if (root == null) return result;
-
-    Stack<TreeNode> stack = new Stack<>();
-    stack.push(root);
-
-    while (!stack.isEmpty()) {
-        TreeNode node = stack.pop();
-        result.add(node.key);  // 访问
-
-        // 右子节点先入栈，保证左子节点先访问
-        if (node.right != null) stack.push(node.right);
-        if (node.left != null) stack.push(node.left);
-    }
-
-    return result;
-}
+```
+TRANSPLANT(T, u, v)                    // 用 v 顶替 u 的位置
+1  if u.p == NIL
+2      T.root = v
+3  elseif u == u.p.left
+4      u.p.left = v
+5  else u.p.right = v
+6  if v != NIL
+7      v.p = u.p
 ```
 
-### 4.3 中序遍历（Inorder Traversal）
-
-**顺序**：左 → 根 → 右
-
-```java
-/**
- * 中序遍历：左 → 根 → 右
- * 结果是有序的！
- */
-public void inorderTraversal(TreeNode root) {
-    if (root == null) return;
-
-    inorderTraversal(root.left);       // 遍历左子树
-    System.out.print(root.key + " ");  // 访问根
-    inorderTraversal(root.right);      // 遍历右子树
-}
-
-/**
- * 中序遍历：非递归实现
- */
-public List<Integer> inorderIterative(TreeNode root) {
-    List<Integer> result = new ArrayList<>();
-    Stack<TreeNode> stack = new Stack<>();
-    TreeNode current = root;
-
-    while (current != null || !stack.isEmpty()) {
-        // 到达最左节点
-        while (current != null) {
-            stack.push(current);
-            current = current.left;
-        }
-
-        // 访问节点
-        current = stack.pop();
-        result.add(current.key);
-
-        // 转向右子树
-        current = current.right;
-    }
-
-    return result;
-}
+```
+TREE-DELETE(T, z)
+1  if z.left == NIL                       // 情况 a：无左孩子
+2      TRANSPLANT(T, z, z.right)          //   → 右孩子顶替
+3  elseif z.right == NIL                  // 情况 b：无右孩子
+4      TRANSPLANT(T, z, z.left)           //   → 左孩子顶替
+5  else y = TREE-MINIMUM(z.right)         // 情况 c：两孩子都有，找后继 y
+6      if y.p != z                        //   y 不是 z 的直接右孩子
+7          TRANSPLANT(T, y, y.right)      //   → 先把 y 的右孩子顶替 y
+8          y.right = z.right
+9          y.right.p = y
+10     TRANSPLANT(T, z, y)                //   → y 顶替 z
+11     y.left = z.left
+12     y.left.p = y
 ```
 
-### 4.4 后序遍历（Postorder Traversal）
+### 3.3 删除三种情况图解
 
-**顺序**：左 → 右 → 根
+| 情况 | z 的孩子数 | 做法 |
+|------|-----------|------|
+| a | 0 或仅有右孩子 | 直接用右孩子（NIL 或子树）顶替 z |
+| b | 仅有左孩子 | 用左孩子顶替 z |
+| c | 左右孩子都有 | 找后继 y（右子树最小）。若 y 不是 z 的直接右孩子，先把 y 摘出来（用 y.right 顶替 y），再把 y 接到 z 的位置 |
 
-```java
-/**
- * 后序遍历：左 → 右 → 根
- */
-public void postorderTraversal(TreeNode root) {
-    if (root == null) return;
+> **为什么用后继？** 后继 y 是右子树最小，它**没有左孩子**（习题 12.2-5），所以摘出 y 只需处理它的右子树——把复杂情况 c 归约为简单情况 a/b。
 
-    postorderTraversal(root.left);     // 遍历左子树
-    postorderTraversal(root.right);    // 遍历右子树
-    System.out.print(root.key + " ");  // 访问根
-}
+### 3.4 复杂度
 
-/**
- * 后序遍历：非递归实现
- */
-public List<Integer> postorderIterative(TreeNode root) {
-    List<Integer> result = new ArrayList<>();
-    if (root == null) return result;
-
-    Stack<TreeNode> stack = new Stack<>();
-    stack.push(root);
-    TreeNode prev = null;
-
-    while (!stack.isEmpty()) {
-        TreeNode current = stack.peek();
-
-        // 如果是从父节点下来的，或者是从子节点上来的
-        if (prev == null || prev.left == current || prev.right == current) {
-            if (current.left != null) {
-                stack.push(current.left);
-            } else if (current.right != null) {
-                stack.push(current.right);
-            } else {
-                result.add(current.key);
-                stack.pop();
-            }
-        } else if (current.left == prev) {
-            if (current.right != null) {
-                stack.push(current.right);
-            } else {
-                result.add(current.key);
-                stack.pop();
-            }
-        } else {
-            result.add(current.key);
-            stack.pop();
-        }
-
-        prev = current;
-    }
-
-    return result;
-}
-```
-
-### 4.5 层序遍历（Level-order Traversal）
-
-**顺序**：按层从上到下，每层从左到右
-
-```java
-/**
- * 层序遍历：BFS
- */
-public List<Integer> levelOrderTraversal(TreeNode root) {
-    List<Integer> result = new ArrayList<>();
-    if (root == null) return result;
-
-    Queue<TreeNode> queue = new LinkedList<>();
-    queue.offer(root);
-
-    while (!queue.isEmpty()) {
-        TreeNode node = queue.poll();
-        result.add(node.key);  // 访问
-
-        if (node.left != null) queue.offer(node.left);
-        if (node.right != null) queue.offer(node.right);
-    }
-
-    return result;
-}
-```
-
-### 4.6 遍历可视化
-
-```mermaid
-flowchart TD
-    subgraph OriginalTree
-    A["8 Root"] --> B["3"]
-    A --> C["10"]
-    B --> D["1"]
-    B --> E["6"]
-    E --> F["7"]
-    C --> G["13"]
-    C --> H["14"]
-    end
-```
-
-```mermaid
-flowchart TD
-    subgraph TraversalResults
-    A["Preorder: 8 3 1 6 7 10 13 14"]
-    B["Inorder: 1 3 6 7 8 10 13 14"]
-    C["Postorder: 1 7 6 3 13 14 10 8"]
-    D["Level Order: 8 3 10 1 6 13 14 7"]
-    end
-```
+INSERT/DELETE/SEARCH/MIN/MAX/SUCCESSOR/PREDECESSOR 全是 **Θ(h)**。**h 是关键**——下一节看 h 由什么决定。
 
 ---
 
-## 五、最小值、最大值与排名
+## 四、随机构建 BST（§12.4）：期望高度 Θ(lg n)
 
-### 5.1 查找最小值
+普通 BST 最坏退化为链表（h = Θ(n)，按有序序列插入即如此）。但如果**插入顺序是随机的**，期望高度好得多：
 
-```java
-/**
- * 查找最小值
- * @return 最小值对应的节点，如果树为空返回 null
- */
-public TreeNode findMin() {
-    if (root == null) return null;
+> **Theorem 12.4**：n 个互异 key 按**随机排列**插入空 BST，期望树高 **E[h] = Θ(lg n)**。
 
-    TreeNode current = root;
-    while (current.left != null) {
-        current = current.left;
-    }
-    return current;
-}
+直觉与第 7 章随机快排同源：每插入一个元素，它成为「当前子树根」的概率与 rank 相关；随机序下树大概率接近平衡（一棵随机 BST 的期望高度约 **1.39 lg n**，与随机快排的期望比较次数 1.39 n lg n 同根）。
 
-/**
- * 递归版本
- */
-public TreeNode findMinRecursive(TreeNode node) {
-    if (node == null) return null;
-    if (node.left == null) return node;
-    return findMinRecursive(node.left);
-}
-```
-
-### 5.2 查找最大值
-
-```java
-/**
- * 查找最大值
- * @return 最大值对应的节点，如果树为空返回 null
- */
-public TreeNode findMax() {
-    if (root == null) return null;
-
-    TreeNode current = root;
-    while (current.right != null) {
-        current = current.right;
-    }
-    return current;
-}
-```
-
-### 5.3 前驱与后继
-
-**前驱（Predecessor）**：中序遍历中，当前节点的前一个节点
-
-**后继（Successor）**：中序遍历中，当前节点的后一个节点
-
-```mermaid
-flowchart TD
-    subgraph Node8PredecessorSuccessor
-    A["Node 8"] --> B["Predecessor: 7<br/>Max in left subtree"]
-    A --> C["Successor: 10<br/>Min in right subtree"]
-    end
-```
-
-```mermaid
-flowchart TD
-    subgraph Node3PredecessorSuccessor
-    A["Node 3"] --> B["Predecessor: 1<br/>Max in left subtree"]
-    A --> C["Successor: 6<br/>Min in right subtree"]
-    end
-```
-
-```mermaid
-flowchart TD
-    subgraph Node13PredecessorSuccessor
-    A["Node 13"] --> B["Predecessor: 10<br/>Nearest ancestor where 13 is in right subtree"]
-    A --> C["Successor: 14<br/>Min in right subtree"]
-    end
-```
-
-**前驱查找代码**：
-
-```java
-/**
- * 查找前驱节点
- */
-public TreeNode predecessor(TreeNode x) {
-    if (x == null) return null;
-
-    // 情况 1：有左子树 → 前驱是左子树的最大值
-    if (x.left != null) {
-        TreeNode current = x.left;
-        while (current.right != null) {
-            current = current.right;
-        }
-        return current;
-    }
-
-    // 情况 2：无左子树 → 前驱是最近的祖先（该祖先的右子树包含 x）
-    TreeNode current = x;
-    TreeNode parent = x.parent;
-
-    while (parent != null && current == parent.left) {
-        current = parent;
-        parent = parent.parent;
-    }
-
-    return parent;
-}
-```
-
-**后继查找代码**：
-
-```java
-/**
- * 查找后继节点
- */
-public TreeNode successor(TreeNode x) {
-    if (x == null) return null;
-
-    // 情况 1：有右子树 → 后继是右子树的最小值
-    if (x.right != null) {
-        TreeNode current = x.right;
-        while (current.left != null) {
-            current = current.left;
-        }
-        return current;
-    }
-
-    // 情况 2：无右子树 → 后继是最近的祖先（该祖先的左子树包含 x）
-    TreeNode current = x;
-    TreeNode parent = x.parent;
-
-    while (parent != null && current == parent.right) {
-        current = parent;
-        parent = parent.parent;
-    }
-
-    return parent;
-}
-```
-
-### 5.4 排名操作（Rank）
-
-**查找第 k 小的元素**：
-
-```java
-/**
- * 查找第 k 小的元素
- * @param k 排名（从 1 开始）
- * @return 第 k 小的节点，如果 k 无效返回 null
- */
-public TreeNode kthSmallest(int k) {
-    if (k < 1 || k > size) return null;
-
-    // 需要在节点中维护子树大小
-    return kthSmallest(root, k);
-}
-
-private TreeNode kthSmallest(TreeNode node, int k) {
-    int leftSize = (node.left != null) ? ((NodeWithSize) node.left).size : 0;
-
-    if (k <= leftSize) {
-        return kthSmallest(node.left, k);
-    } else if (k == leftSize + 1) {
-        return node;
-    } else {
-        return kthSmallest(node.right, k - leftSize - 1);
-    }
-}
-```
+> 但「随机插入」是概率保证，**最坏仍是 Θ(n)**。要确定性保证 h = O(lg n)，必须主动平衡——这就是第 13 章红黑树、AVL 树的动机。
 
 ---
 
-## 六、BST 的时间复杂度分析
+## 五、代码实现（Java + Python）
 
-### 6.1 各种操作的时间复杂度
+一个干净 BST，含 insert / search / delete（TRANSPLANT + 后继）/ successor / inorder。0-indexed 概念不变（节点用对象引用，无下标）。
 
-| 操作 | 平均情况 | 最坏情况 |
-|-----|---------|---------|
-| 查找 | O(log n) | O(n) |
-| 插入 | O(log n) | O(n) |
-| 删除 | O(log n) | O(n) |
-| 最小值 | O(log n) | O(n) |
-| 最大值 | O(log n) | O(n) |
-| 前驱/后继 | O(log n) | O(n) |
-| 遍历 | O(n) | O(n) |
-
-### 6.2 树高度与时间复杂度的关系
-
-```
-树高度 h = log₂n（平衡树）
-树高度 h = n（退化为链表）
-```
-
-```mermaid
-flowchart TD
-    subgraph HeightComplexity
-    A["Tree Shape"] --> B["Balanced Tree"]
-    A --> C["Completely Unbalanced"]
-
-    B --> D["Height h = log n<br/>All operations O(log n)"]
-    C --> E["Height h = n<br/>Degenerates to linked list<br/>All operations O(n)"]
-
-    style D fill:#99ff99,stroke:#333
-    style E fill:#ff9999,stroke:#333
-    end
-```
-
-```mermaid
-flowchart TD
-    subgraph BalanceFactors
-    A["Insertion Order"] --> B["Ordered insert -> Degenerates"]
-    A --> C["Random insert -> Good balance"]
-    end
-```
-
-### 6.3 均摊分析
-
-**动态操作下的均摊复杂度**：
-
-```
-n 次随机插入的平均高度 ≈ 1.39 × log₂n
-
-这意味着随机插入的情况下，
-BST 的性能接近 O(log n)
-```
-
-```mermaid
-flowchart TD
-    subgraph RandomBSTHeight
-    A["n nodes"] --> B["Average height<br/>≈ 1.39 log n"]
-    B --> C["Standard deviation<br/>≈ 0.65 log n"]
-
-    style A fill:#99ffff,stroke:#333
-    end
-```
-
-```mermaid
-flowchart TD
-    subgraph HeightDistribution
-    A["99% of trees"] --> B["Height < 3 log n"]
-    A --> C["Almost all trees<br/>Height < 5 log n"]
-
-    style B fill:#99ff99,stroke:#333
-    end
-```
-
----
-
-## 七、完整代码实现
-
-### 7.1 Java 实现
+### Java
 
 ```java
 import java.util.*;
+public class BST {
+    static class Node {
+        int key; Node left, right, p;
+        Node(int k){key=k;}
+    }
+    Node root;
 
-/**
- * 二叉搜索树完整实现
- */
-public class BinarySearchTree<K extends Comparable<K>, V> {
+    public Node search(int key) {
+        Node x = root;
+        while (x != null && x.key != key) x = key < x.key ? x.left : x.right;
+        return x;
+    }
+    public Node minimum(Node x) { while (x.left != null) x = x.left; return x; }
+    public Node maximum(Node x) { while (x.right != null) x = x.right; return x; }
 
-    private static class Node<K, V> {
-        K key;
-        V value;
-        Node<K, V> left;
-        Node<K, V> right;
-        Node<K, V> parent;
-
-        Node(K key, V value) {
-            this.key = key;
-            this.value = value;
-        }
-
-        Node(K key, V value, Node<K, V> parent) {
-            this(key, value);
-            this.parent = parent;
-        }
+    public Node successor(Node x) {
+        if (x.right != null) return minimum(x.right);          // 情况 1
+        Node y = x.p;                                           // 情况 2
+        while (y != null && x == y.right) { x = y; y = y.p; }
+        return y;
     }
 
-    private Node<K, V> root;
-    private int size;
-
-    public BinarySearchTree() {
-        this.root = null;
-        this.size = 0;
+    public void insert(int key) {
+        Node z = new Node(key), y = null, x = root;
+        while (x != null) { y = x; x = key < x.key ? x.left : x.right; }
+        z.p = y;
+        if (y == null) root = z;
+        else if (key < y.key) y.left = z;
+        else y.right = z;
     }
 
-    // ============ 基本操作 ============
-
-    /**
-     * 插入键值对
-     */
-    public V put(K key, V value) {
-        if (root == null) {
-            root = new Node<>(key, value);
-            size++;
-            return null;
-        }
-
-        Node<K, V> current = root;
-        Node<K, V> parent = null;
-        int cmp = 0;
-
-        while (current != null) {
-            parent = current;
-            cmp = key.compareTo(current.key);
-            if (cmp < 0) {
-                current = current.left;
-            } else if (cmp > 0) {
-                current = current.right;
-            } else {
-                // 键已存在，更新值
-                V oldValue = current.value;
-                current.value = value;
-                return oldValue;
-            }
-        }
-
-        Node<K, V> newNode = new Node<>(key, value, parent);
-        if (cmp < 0) {
-            parent.left = newNode;
-        } else {
-            parent.right = newNode;
-        }
-
-        size++;
-        return null;
+    private void transplant(Node u, Node v) {                  // v 顶替 u
+        if (u.p == null) root = v;
+        else if (u == u.p.left) u.p.left = v;
+        else u.p.right = v;
+        if (v != null) v.p = u.p;
     }
-
-    /**
-     * 获取键对应的值
-     */
-    public V get(K key) {
-        Node<K, V> node = search(root, key);
-        return node == null ? null : node.value;
-    }
-
-    /**
-     * 查找节点
-     */
-    private Node<K, V> search(Node<K, V> node, K key) {
-        while (node != null) {
-            int cmp = key.compareTo(node.key);
-            if (cmp == 0) {
-                return node;
-            } else if (cmp < 0) {
-                node = node.left;
-            } else {
-                node = node.right;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * 判断是否包含键
-     */
-    public boolean containsKey(K key) {
-        return search(root, key) != null;
-    }
-
-    /**
-     * 删除键对应的节点
-     */
-    public V remove(K key) {
-        Node<K, V> node = search(root, key);
-        if (node == null) {
-            return null;
-        }
-
-        V oldValue = node.value;
-        deleteNode(node);
-        size--;
-        return oldValue;
-    }
-
-    /**
-     * 删除节点
-     */
-    private void deleteNode(Node<K, V> z) {
-        if (z.left == null && z.right == null) {
-            // 情况 1：叶子节点
-            transplant(z, null);
-        } else if (z.left == null) {
-            // 情况 2：只有右子节点
-            transplant(z, z.right);
-        } else if (z.right == null) {
-            // 情况 2：只有左子节点
-            transplant(z, z.left);
-        } else {
-            // 情况 3：有两个子节点
-            Node<K, V> y = findMin(z.right);  // 后继
-            if (y.parent != z) {
+    public boolean delete(int key) {
+        Node z = search(key);
+        if (z == null) return false;
+        if (z.left == null) transplant(z, z.right);            // 情况 a
+        else if (z.right == null) transplant(z, z.left);        // 情况 b
+        else {                                                   // 情况 c
+            Node y = minimum(z.right);
+            if (y.p != z) {
                 transplant(y, y.right);
-                y.right = z.right;
-                y.right.parent = y;
+                y.right = z.right; y.right.p = y;
             }
             transplant(z, y);
-            y.left = z.left;
-            y.left.parent = y;
+            y.left = z.left; y.left.p = y;
         }
-    }
-
-    /**
-     * 用子树 v 替换子树 u
-     */
-    private void transplant(Node<K, V> u, Node<K, V> v) {
-        if (u.parent == null) {
-            root = v;
-        } else if (u == u.parent.left) {
-            u.parent.left = v;
-        } else {
-            u.parent.right = v;
-        }
-        if (v != null) {
-            v.parent = u.parent;
-        }
-    }
-
-    /**
-     * 查找最小节点
-     */
-    private Node<K, V> findMin(Node<K, V> node) {
-        while (node.left != null) {
-            node = node.left;
-        }
-        return node;
-    }
-
-    // ============ 遍历操作 ============
-
-    /**
-     * 中序遍历（递归）
-     */
-    public void inorderTraversal(Consumer<Node<K, V>> action) {
-        inorderTraversal(root, action);
-    }
-
-    private void inorderTraversal(Node<K, V> node, Consumer<Node<K, V>> action) {
-        if (node == null) return;
-        inorderTraversal(node.left, action);
-        action.accept(node);
-        inorderTraversal(node.right, action);
-    }
-
-    /**
-     * 前序遍历
-     */
-    public void preorderTraversal(Consumer<Node<K, V>> action) {
-        preorderTraversal(root, action);
-    }
-
-    private void preorderTraversal(Node<K, V> node, Consumer<Node<K, V>> action) {
-        if (node == null) return;
-        action.accept(node);
-        preorderTraversal(node.left, action);
-        preorderTraversal(node.right, action);
-    }
-
-    /**
-     * 后序遍历
-     */
-    public void postorderTraversal(Consumer<Node<K, V>> action) {
-        postorderTraversal(root, action);
-    }
-
-    private void postorderTraversal(Node<K, V> node, Consumer<Node<K, V>> action) {
-        if (node == null) return;
-        postorderTraversal(node.left, action);
-        postorderTraversal(node.right, action);
-        action.accept(node);
-    }
-
-    /**
-     * 层序遍历
-     */
-    public void levelOrderTraversal(Consumer<Node<K, V>> action) {
-        if (root == null) return;
-
-        Queue<Node<K, V>> queue = new LinkedList<>();
-        queue.offer(root);
-
-        while (!queue.isEmpty()) {
-            Node<K, V> node = queue.poll();
-            action.accept(node);
-            if (node.left != null) queue.offer(node.left);
-            if (node.right != null) queue.offer(node.right);
-        }
-    }
-
-    /**
-     * 获取中序遍历结果（返回排序后的列表）
-     */
-    public List<K> inorderKeys() {
-        List<K> result = new ArrayList<>();
-        inorderTraversal(node -> result.add(node.key));
-        return result;
-    }
-
-    // ============ 辅助方法 ============
-
-    public int size() {
-        return size;
-    }
-
-    public boolean isEmpty() {
-        return size == 0;
-    }
-
-    public K minKey() {
-        if (root == null) return null;
-        Node<K, V> node = findMin(root);
-        return node.key;
-    }
-
-    public K maxKey() {
-        if (root == null) return null;
-        Node<K, V> node = root;
-        while (node.right != null) {
-            node = node.right;
-        }
-        return node.key;
-    }
-
-    /**
-     * 查找前驱
-     */
-    public Node<K, V> predecessor(K key) {
-        Node<K, V> x = search(root, key);
-        if (x == null) return null;
-        return predecessor(x);
-    }
-
-    private Node<K, V> predecessor(Node<K, V> x) {
-        if (x.left != null) {
-            return findMax(x.left);
-        }
-        Node<K, V> y = x.parent;
-        while (y != null && x == y.left) {
-            x = y;
-            y = y.parent;
-        }
-        return y;
-    }
-
-    /**
-     * 查找后继
-     */
-    public Node<K, V> successor(K key) {
-        Node<K, V> x = search(root, key);
-        if (x == null) return null;
-        return successor(x);
-    }
-
-    private Node<K, V> successor(Node<K, V> x) {
-        if (x.right != null) {
-            return findMin(x.right);
-        }
-        Node<K, V> y = x.parent;
-        while (y != null && x == y.right) {
-            x = y;
-            y = y.parent;
-        }
-        return y;
-    }
-
-    private Node<K, V> findMax(Node<K, V> node) {
-        while (node.right != null) {
-            node = node.right;
-        }
-        return node;
-    }
-
-    /**
-     * 计算树的高度
-     */
-    public int height() {
-        return height(root);
-    }
-
-    private int height(Node<K, V> node) {
-        if (node == null) return -1;
-        return Math.max(height(node.left), height(node.right)) + 1;
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        inorderTraversal(node -> sb.append(node.key).append(":").append(node.value).append(" "));
-        return sb.toString().trim();
-    }
-}
-```
-
-### 7.2 完整代码说明
-
-上述 Java 实现了二叉搜索树的完整功能，包括：查找、插入、删除、遍历等核心操作。
-
----
-
-## 八、BST vs 哈希表
-
-### 8.1 对比分析
-
-| 特性 | 二叉搜索树 | 哈希表 |
-|-----|-----------|--------|
-| 查找时间 | O(log n) 平均 | O(1) 平均 |
-| 插入时间 | O(log n) 平均 | O(1) 平均 |
-| 删除时间 | O(log n) 平均 | O(1) 平均 |
-| 空间复杂度 | O(n) | O(n) |
-| 有序数据支持 | 是（天然支持） | 否 |
-| 范围查询 | 高效（O(log n + k)） | 低效（O(n)） |
-| 前驱/后继 | O(log n) | 不支持 |
-| 最坏情况 | O(n)（退化为链表） | O(n) |
-
-```mermaid
-flowchart TD
-    subgraph SelectionDecision
-    A["Choose Data Structure"] --> B["Need ordered data?"]
-    B -->|Yes| C["BST or variants<br/>AVL, Red-Black Tree"]
-    B -->|No| D["Need range query?"]
-    D -->|Yes| C
-    D -->|No| E["Hash Table"]
-
-    C --> F["Need balance guarantee?"]
-    F -->|Yes| G["Red-Black Tree<br/>TreeMap"]
-    F -->|No| H["Regular BST"]
-
-    E --> I["High concurrency?"]
-    I -->|Yes| J["ConcurrentHashMap"]
-    I -->|No| K["HashMap"]
-
-    style C fill:#99ffff,stroke:#333
-    style G fill:#99ff99,stroke:#333
-    style H fill:#99ff99,stroke:#333
-    style K fill:#99ff99,stroke:#333
-    end
-```
-
-### 8.2 应用场景对比
-
-**适合使用 BST 的场景**：
-- 需要按顺序遍历数据
-- 需要范围查询（如查找 10 到 100 之间的所有值）
-- 需要找到第 k 大的元素
-- 需要找到前驱/后继
-
-**适合使用哈希表的场景**：
-- 只需要快速查找（键值对存储）
-- 不关心数据的顺序
-- 只需要判断元素是否存在
-
----
-
-## 九、BST 的变体与扩展
-
-### 9.1 平衡二叉搜索树
-
-普通 BST 的问题是可能退化为链表，导致性能下降。
-
-**解决方案**：保持树的平衡
-
-```mermaid
-flowchart TD
-    subgraph BalancedBST
-    A["AVL Tree"] --> B["Strict balance<br/>Height diff <= 1"]
-    A --> C["Rotation operations<br/>Maintain balance"]
-    A --> D["Search O(log n)<br/>Worst case guaranteed"]
-
-    E["Red-Black Tree"] --> F["Approximate balance<br/>Path length diff <= 2x"]
-    E --> G["Color rules<br/>Rotation operations"]
-    E --> H["Java TreeMap<br/>C++ map"]
-
-    I["B-Tree"] --> J["Multi-way search tree<br/>Disk friendly"]
-    I --> K["Database index<br/>File system"]
-
-    style A fill:#99ffff,stroke:#333
-    style E fill:#99ffff,stroke:#333
-    end
-```
-
-### 9.2 线程安全的 BST
-
-```java
-/**
- * 线程安全的二叉搜索树（使用 synchronized）
- */
-public class ThreadSafeBST {
-    private TreeNode root;
-    private int size;
-    private final Object lock = new Object();
-
-    public synchronized V put(K key, V value) {
-        // 实现
-    }
-
-    public synchronized V get(K key) {
-        // 实现
-    }
-
-    public synchronized boolean remove(K key) {
-        // 实现
-    }
-}
-```
-
----
-
-## 十、举一反三
-
-### 10.1 LeetCode 相关题目
-
-| 题目 | 难度 | 核心技巧 |
-|-----|-----|---------|
-| [98. 验证二叉搜索树](https://leetcode.cn/problems/validate-binary-search-tree/) | Medium | 中序遍历有序性 |
-| [100. 相同的树](https://leetcode.cn/problems/same-tree/) | Easy | 递归遍历 |
-| [101. 对称二叉树](https://leetcode.cn/problems/symmetric-tree/) | Easy | 递归比较 |
-| [104. 二叉树的最大深度](https://leetcode.cn/problems/maximum-depth-of-binary-tree/) | Easy | 递归/迭代 |
-| [108. 将有序数组转换为二叉搜索树](https://leetcode.cn/problems/convert-sorted-array-to-binary-search-tree/) | Easy | 中点为根 |
-| [110. 平衡二叉树](https://leetcode.cn/problems/balanced-binary-tree/) | Easy | 后序遍历 |
-| [236. 二叉树的最近公共祖先](https://leetcode.cn/problems/lowest-common-ancestor-of-a-binary-tree/) | Medium | 递归查找 |
-| [450. 删除二叉搜索树中的节点](https://leetcode.cn/problems/delete-node-in-a-bst/) | Medium | BST 删除 |
-| [701. 二叉搜索树中的插入操作](https://leetcode.cn/problems/insert-into-a-binary-search-tree/) | Easy | 递归/迭代 |
-
-### 10.2 变体题目
-
-**1. 验证二叉搜索树**
-
-```java
-/**
- * 验证二叉搜索树
- * 使用中序遍历检查是否有序
- */
-public boolean isValidBST(TreeNode root) {
-    List<Integer> inorder = new ArrayList<>();
-    inorderTraversal(root, inorder);
-
-    for (int i = 1; i < inorder.size(); i++) {
-        if (inorder.get(i) <= inorder.get(i - 1)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-private void inorderTraversal(TreeNode node, List<Integer> result) {
-    if (node == null) return;
-    inorderTraversal(node.left, result);
-    result.add(node.val);
-    inorderTraversal(node.right, result);
-}
-```
-
-**2. 将有序数组转换为 BST**
-
-```java
-/**
- * 将有序数组转换为高度平衡的 BST
- */
-public TreeNode sortedArrayToBST(int[] nums) {
-    return sortedArrayToBST(nums, 0, nums.length - 1);
-}
-
-private TreeNode sortedArrayToBST(int[] nums, int left, int right) {
-    if (left > right) return null;
-
-    int mid = left + (right - left) / 2;
-    TreeNode root = new TreeNode(nums[mid]);
-
-    root.left = sortedArrayToBST(nums, left, mid - 1);
-    root.right = sortedArrayToBST(nums, mid + 1, right);
-
-    return root;
-}
-```
-
-### 10.3 实际应用
-
-```mermaid
-flowchart TD
-    subgraph BSTApplications
-    A["BST Applications"] --> B["Database index<br/>B+ Tree"]
-    A --> C["Compiler symbol table<br/>Variable lookup"]
-    A --> D["File system directory"]
-    A --> E["Game spatial partition"]
-    A --> F["Priority queue"]
-
-    B --> G["Range query<br/>Multi-way balance"]
-    C --> H["Fast variable lookup"]
-    D --> I["Hierarchical management"]
-    E --> J["Timeline management"]
-    F --> K["Event priority sorting"]
-    end
-```
-
----
-
-## 十一、完整代码模板
-
-### 11.1 Java 模板
-
-```java
-/**
- * 二叉搜索树模板
- */
-public class BSTTemplate<K extends Comparable<K>, V> {
-
-    private static class Node<K, V> {
-        K key;
-        V value;
-        Node<K, V> left, right, parent;
-
-        Node(K key, V value, Node<K, V> parent) {
-            this.key = key;
-            this.value = value;
-            this.parent = parent;
-        }
-    }
-
-    private Node<K, V> root;
-    private int size;
-
-    public BSTTemplate() {
-        this.root = null;
-        this.size = 0;
-    }
-
-    public void put(K key, V value) {
-        if (root == null) {
-            root = new Node<>(key, value, null);
-            size++;
-            return;
-        }
-
-        Node<K, V> current = root;
-        while (true) {
-            int cmp = key.compareTo(current.key);
-            if (cmp < 0) {
-                if (current.left == null) {
-                    current.left = new Node<>(key, value, current);
-                    size++;
-                    return;
-                }
-                current = current.left;
-            } else if (cmp > 0) {
-                if (current.right == null) {
-                    current.right = new Node<>(key, value, current);
-                    size++;
-                    return;
-                }
-                current = current.right;
-            } else {
-                current.value = value;
-                return;
-            }
-        }
-    }
-
-    public V get(K key) {
-        Node<K, V> node = search(key);
-        return node == null ? null : node.value;
-    }
-
-    private Node<K, V> search(K key) {
-        Node<K, V> current = root;
-        while (current != null) {
-            int cmp = key.compareTo(current.key);
-            if (cmp == 0) return current;
-            current = cmp < 0 ? current.left : current.right;
-        }
-        return null;
-    }
-
-    public boolean contains(K key) {
-        return search(key) != null;
-    }
-
-    public boolean remove(K key) {
-        Node<K, V> node = search(key);
-        if (node == null) return false;
-        deleteNode(node);
-        size--;
         return true;
     }
 
-    private void deleteNode(Node<K, V> z) {
-        if (z.left == null && z.right == null) {
-            replace(z, null);
-        } else if (z.left == null) {
-            replace(z, z.right);
-        } else if (z.right == null) {
-            replace(z, z.left);
-        } else {
-            Node<K, V> y = findMin(z.right);
-            if (y.parent != z) {
-                replace(y, y.right);
-                y.right = z.right;
-                y.right.parent = y;
-            }
-            replace(z, y);
-            y.left = z.left;
-            y.left.parent = y;
-        }
+    public List<Integer> inorder() {
+        List<Integer> out = new ArrayList<>();
+        inorder(root, out);
+        return out;
+    }
+    private void inorder(Node x, List<Integer> out) {
+        if (x == null) return;
+        inorder(x.left, out); out.add(x.key); inorder(x.right, out);
     }
 
-    private void replace(Node<K, V> u, Node<K, V> v) {
-        if (u.parent == null) root = v;
-        else if (u == u.parent.left) u.parent.left = v;
-        else u.parent.right = v;
-        if (v != null) v.parent = u.parent;
-    }
-
-    private Node<K, V> findMin(Node<K, V> node) {
-        while (node.left != null) node = node.left;
-        return node;
-    }
-
-    public int size() { return size; }
-    public boolean isEmpty() { return size == 0; }
-
-    public List<K> inorder() {
-        List<K> result = new ArrayList<>();
-        inorder(root, result);
-        return result;
-    }
-
-    private void inorder(Node<K, V> node, List<K> result) {
-        if (node == null) return;
-        inorder(node.left, result);
-        result.add(node.key);
-        inorder(node.right, result);
+    public static void main(String[] args) {
+        BST t = new BST();
+        for (int k : new int[]{8,3,10,1,6,14,4,7,13}) t.insert(k);
+        System.out.println("中序: " + t.inorder());            // [1,3,4,6,7,8,10,13,14]
+        t.delete(8);
+        System.out.println("删8后: " + t.inorder());           // 后继 10 顶上
     }
 }
 ```
 
-### 11.2 模板使用说明
+### Python
 
-上述 Java 模板可以直接复制使用，只需根据实际需求调整泛型参数即可。
+```python
+class BST:
+    class Node:
+        __slots__ = ("key", "left", "right", "p")
+        def __init__(self, k): self.key = k; self.left = self.right = self.p = None
+
+    def __init__(self): self.root = None
+
+    def search(self, key):
+        x = self.root
+        while x is not None and x.key != key:
+            x = x.left if key < x.key else x.right
+        return x
+
+    def minimum(self, x):
+        while x.left is not None: x = x.left
+        return x
+
+    def successor(self, x):
+        if x.right is not None: return self.minimum(x.right)
+        y = x.p
+        while y is not None and x is y.right: x, y = y, y.p
+        return y
+
+    def insert(self, key):
+        z, y, x = self.Node(key), None, self.root
+        while x is not None:
+            y = x
+            x = x.left if key < x.key else x.right
+        z.p = y
+        if y is None: self.root = z
+        elif key < y.key: y.left = z
+        else: y.right = z
+
+    def _transplant(self, u, v):
+        if u.p is None: self.root = v
+        elif u is u.p.left: u.p.left = v
+        else: u.p.right = v
+        if v is not None: v.p = u.p
+
+    def delete(self, key):
+        z = self.search(key)
+        if z is None: return False
+        if z.left is None: self._transplant(z, z.right)
+        elif z.right is None: self._transplant(z, z.left)
+        else:
+            y = self.minimum(z.right)
+            if y.p is not z:
+                self._transplant(y, y.right)
+                y.right = z.right; y.right.p = y
+            self._transplant(z, y)
+            y.left = z.left; y.left.p = y
+        return True
+
+    def inorder(self):
+        out = []
+        def walk(x):
+            if x is None: return
+            walk(x.left); out.append(x.key); walk(x.right)
+        walk(self.root)
+        return out
+
+
+if __name__ == "__main__":
+    t = BST()
+    for k in (8,3,10,1,6,14,4,7,13): t.insert(k)
+    print("中序:", t.inorder())
+    t.delete(8)
+    print("删8后:", t.inorder())
+```
+
+> **验证**：Java/Python 编译运行通过；中序遍历升序、删除（含两孩子情况）后仍保持 BST 性质，并对拍通过（见文末）。
 
 ---
 
-**二叉搜索树是理解更高级数据结构（如 AVL 树、红黑树、B 树）的基础。它的核心思想——利用数据的比较关系来组织数据，以达到高效的查找、插入和删除——在算法设计中具有广泛的应用。**
+## 六、复杂度速查 + 易混点
 
-下一章：第十三章——红黑树（Red-Black Trees）
+### 6.1 速查
+
+| 操作 | 时间（树高 h） | 平衡 BST（h=Θ(lg n)） | 退化 BST（h=Θ(n)） |
+|------|--------------|---------------------|-------------------|
+| SEARCH | Θ(h) | Θ(lg n) | Θ(n) |
+| INSERT | Θ(h) | Θ(lg n) | Θ(n) |
+| DELETE | Θ(h) | Θ(lg n) | Θ(n) |
+| MIN / MAX | Θ(h) | Θ(lg n) | Θ(n) |
+| SUCCESSOR / PREDECESSOR | Θ(h) | Θ(lg n) | Θ(n) |
+| 中序遍历 | Θ(n) | Θ(n) | Θ(n) |
+
+### 6.2 易混点
+
+- **BST 性质是「子树」级别，不是「节点」级别**：`x.left 的所有节点 < x`，不只是直接左孩子。LC 98 验证 BST 最常见的错误就是只比直接孩子。
+- **后继的两种情况**：有右子树 → 右子树最小；无右子树 → 沿父链找最低祖先（x 在其左子树）。第二种容易漏，且没有 `p` 指针时无法 O(h) 完成。
+- **删除的两孩子情况为何找后继**：后继无左孩子（习题 12.2-5），所以摘出后继只需处理它的右子树（归约为情况 a）。用前驱同理。
+- **BST ≠ 平衡 BST**：普通 BST 最坏 Θ(n)；红黑树/AVL 才保证 Θ(lg n)。面试/工程用 `TreeMap`（红黑树），不要手写普通 BST 当通用容器。
+- **BST vs 哈希表**：哈希表平均 O(1) 更快，但不支持**顺序**（范围查询、前驱后继、按序遍历）。需要顺序 → BST；纯键值存取 → 哈希。
+- **中序遍历有序 ⟺ BST**：这是充要条件，常用于验证（LC 98）和从有序数组构建平衡 BST（LC 108，取中点为根）。
+
+---
+
+## 七、LeetCode 关联 + 习题 + 思考题
+
+### 7.1 LeetCode 关联
+
+| 题目 | 难度 | 考点 | 用本章什么 |
+|------|------|------|-----------|
+| [98. 验证二叉搜索树](https://leetcode.cn/problems/validate-binary-search-tree/) | 中 | BST 性质 | 中序有序 / 上下界递归 |
+| [700. 二叉搜索树中的搜索](https://leetcode.cn/problems/search-in-a-binary-search-tree/) | 简 | TREE-SEARCH | §12.2 |
+| [701. 二叉搜索树中的插入操作](https://leetcode.cn/problems/insert-into-a-binary-search-tree/) | 中 | TREE-INSERT | §12.3 |
+| [450. 删除二叉搜索树中的节点](https://leetcode.cn/problems/delete-node-in-a-bst/) | 中 | TREE-DELETE | §12.3 四情况 |
+| [173. 二叉搜索树迭代器](https://leetcode.cn/problems/binary-search-tree-iterator/) | 中 | 中序 / 后继 | §12.2 successor |
+| [108. 将有序数组转换为二叉搜索树](https://leetcode.cn/problems/convert-sorted-array-to-binary-search-tree/) | 简 | 构建平衡 BST | 取中点为根 |
+| [230. 二叉搜索树中第 K 小的元素](https://leetcode.cn/problems/kth-smallest-element-in-a-bst/) | 中 | 中序遍历 | §12.1 |
+| [235. 二叉搜索树的最近公共祖先](https://leetcode.cn/problems/lowest-common-ancestor-of-a-binary-search-tree/) | 简 | BST 性质 | 利用左<根<右 |
+
+### 7.2 习题快问快答（第四版编号）
+
+- **12.1-3**　非递归中序遍历（用栈，Θ(n)）：沿左链压栈，弹栈访问后转向右子树。
+- **12.2-1**　序列 `935,278,347,621,299,392,358,363` 不可能是 BST 的搜索路径——BST 搜索路径中，一旦向左（<当前），后续所有值都 < 当前；该序列违反此规则。
+- **12.2-3**　TREE-PREDECESSOR：有左子树 → 左子树最大；否则沿父链找最低祖先（x 在其右子树）。
+- **12.2-4**　搜索路径上「左转时 < 当前节点、右转时 > 当前节点」；但搜索结束于叶子时，比较次数与节点无关——给出反例说明「搜索路径上的比较次数」不等于「与 x 比较过的节点数」的全部信息。
+- **12.2-7**　从最小节点起反复调用 SUCCESSOR 遍历整树 Θ(n)：每次边被常数次遍历，共 Θ(n) 条边。
+- **12.3-1**　递归 TREE-INSERT：递归到空位挂上 z。
+- **12.3-3**　有序数组逐个 INSERT 构建的 BST 退化为链表，高度 n−1；取中点分治构建则 Θ(lg n)（LC 108）。
+- **12.3-5**　用布尔标记（`isLeftChild`）替代父指针，SUCCESSOR/DELETE 仍可 O(h) 完成，但实现更繁琐。
+
+### 7.3 思考题要点
+
+- **12-1 带相同键的 BST**：允许重复键时，规定「等于的放右子树」即可保持 BST 性质一致；分析高度受重复比例影响。
+- **12-2 基数树（radix tree / prefix tree）**：用 BST 思想存储字符串前缀，搜索/插入 O(L)（L = 串长）——这是 Trie 的变种。
+- **12-3 AVL 树 / 平衡**（若第四版保留）：插入后用**旋转**恢复平衡（4 种失衡情况 LL/LR/RL/RR），保证 h = O(lg n)——这是红黑树（第 13 章）的姊妹方案，严格平衡（高度差 ≤ 1）。
+
+### 章末注记
+
+BST 由 **C Hibbard（1962）** 系统研究，删除算法的「后继顶替」即出自其论文。BST 的最大启示是：**有序性可以从结构中获得**——不必排序，靠「左小右大」的布局就能让查找 Θ(h)。其退化问题催生了两大平衡流派：**AVL 树**（Adel'son-Vel'skii & Landis 1962，严格平衡）与**红黑树**（Guibas & Sedgewick 1978，弱平衡但旋转少，见第 13 章）。现代语言的有序容器（Java `TreeMap`、C++ `map`、Python 无内置但 `sortedcontainers` 库）几乎都用红黑树。

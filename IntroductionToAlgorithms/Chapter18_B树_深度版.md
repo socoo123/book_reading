@@ -1,626 +1,533 @@
-# 第十八章：B树（Balanced Search Trees for Disk）——深度版
+# 第十八章：B 树 —— 深度版
 
-## 一、问题描述
+## 一、开篇定位
 
-### 1.1 核心挑战：磁盘存储的低效访问
+前面第 12、13 章的二叉搜索树、红黑树都假设数据全在**内存**里，比较和旋转的代价就是全部代价。本章换场景：**数据量大到内存装不下，必须存在磁盘上**，每访问一个节点就是一次磁盘 I/O。这时瓶颈从「CPU 比较次数」变成「磁盘访问次数」，数据结构的设计目标也随之改变。
 
-在深入B树之前，我们必须理解一个关键问题：**为什么针对磁盘存储的数据结构评估方式与内存数据结构不同？**
+B 树就是为此而生的平衡搜索树：把节点做得**和磁盘块一样大**（一个节点存几百上千个键），树高从红黑树的约 30 层压到 2~4 层，查找任何键只需 2~3 次磁盘访问。它是几乎所有关系型数据库索引（B+ 树变体）和许多文件系统的基石。
 
-**内存 vs 磁盘的性能鸿沟：**
+- **前向依赖**：红黑树（第 13 章）是它的「内存版」对照物；t=2 的 B 树就是 2-3-4 树，和红黑树存在精确对应（习题 18.1-5）。
+- **后向指针**：这是「高级数据结构」部分的最后一课树结构，下一章（第 19 章）转向不相交集合。
 
-| 存储类型 | 访问时间 | 容量成本 | 特点 |
-|---------|---------|---------|------|
-| 主存（内存） | ~50纳秒 | 高昂 | 电子访问，零机械延迟 |
-| 磁盘（HDD） | 4-10毫秒 | 便宜 | 机械运动，包含旋转和寻道 |
-| 固态硬盘（SSD） | ~0.1毫秒 | 中等 | 电子访问但按块读写 |
+## 二、核心思想：为什么磁盘场景要换一套玩法
 
-**性能差距的具体数字：**
-- 7200 RPM磁盘：单次旋转需要8.33毫秒
-- 一次完整旋转期间，内存可以访问超过**100,000次**
-- 磁盘平均访问时间约4毫秒（包含机械寻道）
+### 2.1 内存 vs 磁盘的性能鸿沟
 
-**磁盘访问的核心特点：**
-1. **按块读写**：不能只读取一个字节，必须读写整个数据块（512-4096字节）
-2. **批量访问**：为摊销机械延迟，磁盘一次访问多个数据项
-3. **块是基本单位**：每次磁盘读写的代价与读写的数据量无关，只与访问的块数有关
+| 存储 | 典型访问时间 | 特点 |
+|------|------------|------|
+| 主存 | ~50 ns | 电子访问 |
+| 磁盘（HDD） | ~4 ms（7200 RPM 转一圈 8.33 ms） | 机械寻道 + 旋转，比内存慢 5 个数量级 |
+| SSD | 介于其间 | 电子访问，但同样**按块读写** |
 
-```mermaid
-flowchart TD
-    A[访问磁盘] --> B{需要访问多少块?}
-    B -->|1块| C[时间 ≈ 4-10ms]
-    B -->|10块| D[时间 ≈ 4-10ms + 额外传输时间]
+一次磁盘旋转的时间里，内存可以访问超过 10 万次。所以评估磁盘上的数据结构，要分开算两笔账：
 
-    A --> E[磁盘访问代价模型]
-    E --> F[主要因素：块数]
-    E --> G[次要因素：数据传输量]
+- **磁盘访问次数**（读写了多少个块）——主要矛盾；
+- **CPU 时间**——次要矛盾。
 
-    style C fill:#f99,stroke:#333
-    style D fill:#9f9,stroke:#333
-```
+磁盘按**块**（512~4096 字节）读写：读 1 字节和读 1 整块代价几乎相同。既然读一个块和读一个字节一样贵，那就**让每个节点 = 一个磁盘块**，一次 I/O 把几百个键全捞进内存。
 
-### 1.2 B树的诞生背景
+### 2.2 多路搜索：用「胖节点」换「矮树」
 
-**核心问题**：当数据量大到无法全部装入内存时，如何设计一种数据结构，使得：
-- 最小化磁盘访问次数
-- 支持高效的搜索、插入、删除操作
-- 保持平衡，保证操作的时间复杂度
+二叉搜索树每个节点做 2 路分支决策；B 树节点存 t-1 ~ 2t-1 个键，做 **(n+1) 路分支决策**。分支因子从 2 提到 1000，树高的对数底数就从 2 变成 1000。
 
-**B树的解决方案**：
-- 使用**多路搜索**替代二叉搜索
-- 每个节点可以拥有**数十到数千个子节点**
-- 节点大小与**磁盘块大小对齐**
-- 所有叶子节点在同一深度，保证平衡
+**直觉数字**（CLRS 图 18.3）：每节点存 1000 个键、分支因子 1001 的 B 树，**高度 2 就能存下 10 亿个键**；若根常驻内存，找到任意键最多 2 次磁盘访问。换成红黑树要约 30 次。
 
-### 1.3 B树与红黑树的对比
+## 三、定义与性质
 
-| 特性 | 红黑树 | B树 |
-|-----|-------|-----|
-| 分支因子 | 最多2 | t到2t（通常50-2000） |
-| 树高 | O(lg n)，底数为2 | O(log_t n)，底数为t |
-| 磁盘访问次数 | O(lg n) | O(log_t n) |
-| 节点存储 | 单个键 | 多个键 |
-| 适用场景 | 内存数据 | 磁盘存储 |
+### 3.1 B 树的 5 条性质
 
-**高度对比示例**（10亿条记录）：
-- 红黑树高度：约30层（2^30 ≈ 10亿）
-- B树（t=1000）：高度仅3层（1000^3 = 10亿）
+一棵 B 树 T 以 T.root 为根，满足：
 
-## 二、为什么需要B树——从磁盘访问的角度思考
+1. 每个节点 x 有属性：x.n（键数）；x.key₁ ≤ x.key₂ ≤ … ≤ x.keyₙ（键有序）；x.leaf（是否叶子）。
+2. 内部节点 x 有 x.n + 1 个子指针 x.c₁ … x.c_{n+1}；叶子没有孩子。
+3. **键分隔子树范围**：子树 x.cᵢ 中的键 kᵢ 满足 k₁ ≤ x.key₁ ≤ k₂ ≤ x.key₂ ≤ … ≤ x.keyₙ ≤ k_{n+1}。
+4. **所有叶子深度相同**，都等于树高 h。
+5. 键数上下界由**最小度数 t（t ≥ 2）**决定：
+   - 非根节点至少 **t-1** 个键（内部节点至少 t 个孩子）；
+   - 所有节点至多 **2t-1** 个键（内部节点至多 2t 个孩子），恰有 2t-1 个键的节点称为**满**；
+   - 非空树的根至少 1 个键（根是唯一允许「欠载」的节点）。
 
-### 2.1 传统二叉搜索树在磁盘上的问题
+> **t=2 时就是 2-3-4 树**：每个内部节点有 2、3 或 4 个孩子。习题 18.1-5 指出它与红黑树的对应：把红黑树中每个黑节点连同它的红孩子「吸收」成一个节点，得到的正是一棵 2-3-4 树。
+
+图 18.1 是一棵键为英文字母辅音的 B 树（其节点最少 2 键、最多 3 键，故 t=2 或 t=3 都合法——习题 18.1-2）：
 
 ```mermaid
 graph TD
-    A[二叉搜索树的问题] --> B[每个节点太小]
-    A --> C[树太高]
-    A --> D[磁盘访问次数太多]
+    M["M"] --> DH["D H"]
+    M --> QTX["Q T X"]
+    DH --> BC["B C"]
+    DH --> FG["F G"]
+    DH --> JKL["J K L"]
+    QTX --> NP["N P"]
+    QTX --> RS["R S"]
+    QTX --> VW["V W"]
+    QTX --> YZ["Y Z"]
 
-    B --> B1[节点只存1个键]
-    B --> B2[与磁盘块大小不匹配]
-    B --> B3[浪费磁盘带宽]
-
-    C --> C1[10亿条记录需要30层]
-    C --> C2[每次查找30次磁盘IO]
-    C --> C3[代价太高]
-
-    D --> D1[磁盘IO是瓶颈]
-    D --> D2[CPU等待时间长]
-    D --> D3[系统吞吐量低]
+    classDef hot fill:#FFE082,stroke:#F9A825,color:#1f1f1f;
+    classDef found fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f;
+    classDef plain fill:#90CAF9,stroke:#1976D2,color:#1f1f1f;
+    class M,QTX hot;
+    class RS found;
+    class DH,BC,FG,JKL,NP,VW,YZ plain;
 ```
 
-### 2.2 B树的设计哲学
+高亮节点是查找 R 时检查的路径：根 M（R > M，右转）→ 节点 QTX（Q < R < T，进中间孩子）→ 叶子 RS（找到）。
 
-**核心思想**：让每个节点尽可能大，大到填满一个磁盘块。
+### 3.2 高度速查
 
-```mermaid
-flowchart LR
-    subgraph 磁盘块
-    A[节点A] --> B[节点B]
-    A --> C[节点C]
-    A --> D[节点D]
-    B --> E[...]
-    C --> F[...]
-    D --> G[...]
-    end
-
-    style A fill:#ff9,stroke:#333,stroke-width:4px
-    style B fill:#9ff,stroke:#333
-    style C fill:#9ff,stroke:#333
-    style D fill:#9ff,stroke:#333
-
-    note["每个节点 = 1个磁盘块<br/>分支因子 = 块大小 / 指针大小"]
-```
-
-**B树的优势：**
-1. **减少树高**：分支因子大导致树高小
-2. **磁盘局部性**：访问一个节点时，整个块被加载
-3. **批量操作**：一个节点内的多个键同时可用
-
-## 三、B树的定义与性质
-
-### 3.1 形式化定义
-
-**最小度数 t（Minimum Degree）**：
-- 每个节点（除根外）至少有 t-1 个键
-- 每个节点（除根外）至少有 t 个子节点
-- 每个节点最多有 2t-1 个键
-- 每个节点最多有 2t 个子节点
-
-**B树T的5条性质：**
-
-```mermaid
-flowchart TD
-    A[B树性质] --> B[1. 节点属性]
-    A --> C[2. 子指针]
-    A --> D[3. 关键字分隔]
-    A --> E[4. 叶子深度相同]
-    A --> F[5. 键数量限制]
-
-    B --> B1[x.n：键的数量]
-    B --> B2[x.key1 ≤ x.key2 ≤ ... ≤ x.keyn]
-    B --> B3[x.leaf：是否为叶子]
-
-    C --> C1[内部节点有n+1个子指针]
-    C --> C2[叶子节点无子指针]
-
-    D --> D1[k在x.ci子树 ⇒ k1 ≤ k ≤ kn+1]
-
-    E --> E1[所有叶子深度相同]
-
-    F --> F1[非根节点：t-1 ≤ n ≤ 2t-1]
-    F --> F2[根节点：1 ≤ n ≤ 2t-1]
-```
-
-### 3.2 特殊情况的B树
-
-**当 t = 2 时（B树的最小配置）：**
-- 每个内部节点有2、3或4个子节点
-- 这就是著名的 **2-3-4树**
-
-```mermaid
-graph TD
-    subgraph "t=2的B树节点类型"
-    A["2-节点<br/>1个键，2个子节点"]
-    B["3-节点<br/>2个键，3个子节点"]
-    C["4-节点<br/>3个键，4个子节点"]
-    end
-```
-
-### 3.3 B树的高度分析
-
-**定理18.1**：对于包含 n 个键、高度为 h、最小度数为 t ≥ 2 的B树：
+**定理 18.1**：n 个键、高度 h、最小度数 t 的 B 树满足
 
 ```
-h ≤ log_t((n+1)/2)
+h ≤ log_t((n+1)/2)     （等价地 n ≥ 2t^h − 1）
 ```
 
-**证明的核心思路：**
+一句话直觉：根至少 1 键，第 1 层至少 2 节点，之后每层节点数至少乘 t，所以深度 i 处至少 2t^{i-1} 个节点、每节点 t-1 个键，求和即 n ≥ 2t^h − 1。
 
-```mermaid
-flowchart TD
-    A["根至少有1个键"] --> B["第1层至少有2个节点"]
-    B --> C["第2层至少有2t个节点"]
-    C --> D["第3层至少有2t平方个节点"]
-    D --> E["..."]
-    E --> F["第h层至少有2t的h-1次方个节点"]
+| n（键数） | 红黑树高度 ≈lg n | B 树 t=100 | B 树 t=1000 |
+|----------|----------------|-----------|-------------|
+| 10⁶ | ~20 | ≤3 | ≤2 |
+| 10⁹ | ~30 | ≤4 | ≤3 |
+| 10¹² | ~40 | ≤5 | ≤4 |
 
-    F --> G["总键数 ≥ 1 + 2(t-1)(1 + t + t² + ... + t的h-1次方)"]
-    G --> H["n ≥ 2t的h次方 - 1"]
-    H --> I["h ≤ log_t((n+1)/2)"]
-```
+实际中节点按磁盘块装满（如每节点 1000 键），10 亿键只要高度 2（图 18.3），比理论最坏上界还低。
 
-**高度对比示例：**
+另一个方向的界（习题 18.1-4）：高度 h 的 B 树**最多**装 (2t)^(h+1) − 1 个键（每层全满求和）。
 
-| n（键数量） | 红黑树高度 | B树高度（t=100） | B树高度（t=1000） |
-|------------|-----------|-----------------|------------------|
-| 1,000 | ~10 | 2 | 1 |
-| 1,000,000 | ~20 | 3 | 2 |
-| 1,000,000,000 | ~30 | 4 | 3 |
-| 1,000,000,000,000 | ~40 | 5 | 4 |
+## 四、基本操作
 
-## 四、B树的基本操作
+所有操作都是**单趟下行**：从根到叶不回溯。两个约定：根常驻内存；传入的参数节点必须先 DISK-READ。
 
-### 4.1 搜索操作 B-TREE-SEARCH
+### 4.1 搜索 B-TREE-SEARCH
 
-**算法思路**：从根开始，在每个节点内进行线性搜索，决定向哪个子树递归。
-
-```java
+```text
 B-TREE-SEARCH(x, k)
 1  i = 1
-2  while i ≤ x.n and k > x.keyi
+2  while i ≤ x.n and k > x.keyᵢ
 3      i = i + 1
-4  if i ≤ x.n and k == x.keyi
-5      return (x, i)          // 找到，返回节点和位置
+4  if i ≤ x.n and k == x.keyᵢ
+5      return (x, i)            // 找到：节点 + 下标
 6  elseif x.leaf
-7      return NIL             // 到达叶子，未找到
-8  else
-9      DISK-READ(x.ci)        // 读取子节点
-10     return B-TREE-SEARCH(x.ci, k)
+7      return NIL               // 到达叶子，未找到
+8  else DISK-READ(x.cᵢ)
+9      return B-TREE-SEARCH(x.cᵢ, k)
 ```
 
-**搜索过程示例**（在图18.1中搜索字母'R'）：
+与二叉搜索唯一的区别：节点内从「2 选 1」变成「n+1 选 1」。磁盘访问 O(h) = O(log_t n)；节点内线性扫描每层 O(t)，CPU 共 O(t·h) = O(t·log_t n)。（节点内改用二分可把 CPU 降到 O(lg n)，与 t 无关——习题 18.2-6。）
 
-```mermaid
-graph TD
-    Root["根节点<br/>H N O"] --> L["左子<br/>C G"]
-    Root --> M["中子<br/>P Q R S"]
-    Root --> R["右子<br/>T U V W X Y Z"]
+### 4.2 分裂 B-TREE-SPLIT-CHILD：插入的发动机
 
-    M --> M1["P Q<br/>子节点"]
-    M --> M2["R S<br/>子节点"]
+**直觉**：节点塞满（2t-1 键）就装不下了。把它从正中间剪开：左半留在原节点 y，右半搬进新节点 z，**中位数键上移到父节点**成为新的分隔键。
 
-    M2 --> Found["找到R<br/>在位置2"]
-
-    style Found fill:#9f9,stroke:#333,stroke-width:4px
-    style Root fill:#ff9,stroke:#333
-    style M fill:#ff9,stroke:#333
-    style M2 fill:#ff9,stroke:#333
-```
-
-**复杂度分析：**
-- **磁盘访问**：O(h) = O(log_t n)
-- **CPU时间**：O(t × h) = O(t log_t n)
-
-### 4.2 创建空B树 B-TREE-CREATE
-
-```java
-B-TREE-CREATE(T)
-1  x = ALLOCATE-NODE()      // 分配一个磁盘块
-2  x.leaf = TRUE            // 初始时是叶子
-3  x.n = 0                  // 无键
-4  DISK-WRITE(x)            // 写回磁盘
-5  T.root = x               // 设置根节点
-```
-
-**特点**：O(1)时间，仅需一次磁盘写操作。
-
-### 4.3 分裂节点 B-TREE-SPLIT-CHILD
-
-**核心操作**：将满节点（2t-1个键）分裂成两个节点，各有t-1个键，中间键上升到父节点。
-
-```java
-B-TREE-SPLIT-CHILD(x, i)
-1  y = x.ci                 // 满节点
-2  z = ALLOCATE-NODE()      // 新节点
+```text
+B-TREE-SPLIT-CHILD(x, i)          // x 非满，x.cᵢ 是满孩子
+1  y = x.cᵢ                        // 待分裂的满节点
+2  z = ALLOCATE-NODE()             // z 拿走 y 的右半
 3  z.leaf = y.leaf
-4  z.n = t - 1              // 新节点有t-1个键
-
-5  // z获取y的最大的t-1个键
-6  for j = 1 to t - 1
-7      z.keyj = y.key(j+t)
-
-8  // 如果不是叶子，z获取y的最大的t个子节点
-9  if not y.leaf
-10     for j = 1 to t
-11         z.cj = y.c(j+t)
-
-12 y.n = t - 1              // y现在有t-1个键
-
-13 // 在x中为新节点z腾出位置
-14 for j = x.n + 1 downto i + 1
-15     x.c(j+1) = x.cj
-16 x.c(i+1) = z
-
-17 // 将y的中间键上移到x
-18 for j = x.n downto i
-19     x.key(j+1) = x.keyj
-20 x.keyi = y.keyt
-
-21 x.n = x.n + 1           // x多了一个键
-
-22 // 写回磁盘
-23 DISK-WRITE(y)
-24 DISK-WRITE(z)
-25 DISK-WRITE(x)
+4  z.n = t - 1
+5  for j = 1 to t - 1
+6      z.keyⱼ = y.keyⱼ₊ₜ           // z 获得 y 最大的 t-1 个键
+7  if not y.leaf
+8      for j = 1 to t
+9          z.cⱼ = y.cⱼ₊ₜ           // …及对应的 t 个孩子
+10 y.n = t - 1                     // y 只留左半
+11 for j = x.n + 1 downto i + 1
+12     x.cⱼ₊₁ = x.cⱼ               // x 的子指针右移，给 z 腾位
+13 x.cᵢ₊₁ = z
+14 for j = x.n downto i
+15     x.keyⱼ₊₁ = x.keyⱼ           // x 的键右移
+16 x.keyᵢ = y.keyₜ                 // y 的中位数键上移
+17 x.n = x.n + 1
+18 DISK-WRITE(y)
+19 DISK-WRITE(z)
+20 DISK-WRITE(x)
 ```
 
-**分裂过程图解**（t = 4）：
+t=4 的分裂（CLRS 图 18.5）：满节点 y = [P Q R S T U V]（2t-1 = 7 键）以中位数 S 为界劈开，S 上移进父节点 x：
 
 ```mermaid
 graph TD
-    subgraph 分裂前
-    Y["y = x.ci<br/>[A B C D E F G S]<br/>8个键，满节点"]
+    subgraph Before["分裂前"]
+        X1["x<br/>… N W …"] --> Y1["y<br/>P Q R S T U V<br/>7 个键，已满"]
+    end
+    subgraph After["分裂后"]
+        X2["x<br/>… N S W …"] --> Y2["y<br/>P Q R"]
+        X2 --> Z2["z<br/>T U V"]
     end
 
-    Y --> |分裂| Y2["y<br/>[A B C]<br/>4个键"]
-    Y --> |中间键S上移| Parent["x<br/>[P Q S T]<br/>增加S"]
-    Y --> |右半部分| Z["z<br/>[T U V]<br/>3个键"]
-
-    style Y fill:#f99,stroke:#333
-    style Y2 fill:#9ff,stroke:#333
-    style Z fill:#9ff,stroke:#333
-    style Parent fill:#ff9,stroke:#333
+    classDef parent fill:#90CAF9,stroke:#1976D2,color:#1f1f1f;
+    classDef full fill:#EF9A9A,stroke:#C62828,color:#1f1f1f;
+    classDef half fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f;
+    class X1,X2 parent;
+    class Y1 full;
+    class Y2,Z2 half;
 ```
 
-**分裂的关键性质：**
-- 父节点x必须是非满的
-- 分裂是唯一使B树长高的方式（根节点分裂）
+CPU 时间 Θ(t)（几个 for 循环），磁盘访问 O(1)（3 次写）。
 
-### 4.4 插入操作 B-TREE-INSERT
+**前提条件**：父节点 x 必须非满，否则「中位数上移」会把它撑爆。怎么保证？看插入。
 
-**核心策略**：自顶向下，单次遍历，在向下过程中预分裂所有满节点。
+### 4.3 插入 B-TREE-INSERT：预分裂的单趟下行
 
-```java
+**核心策略**：下降途中**见满就分裂**（预分裂）。这样需要分裂时父节点一定非满，永远不用回头向上补裂。
+
+根满是个特例——它没有父节点，所以先造一个新空根，让老根变成它的孩子再分裂。**根分裂是 B 树长高的唯一方式**（与二叉搜索树「在底部长叶」相反，B 树「在顶部长根」）。
+
+```text
 B-TREE-INSERT(T, k)
 1  r = T.root
-2  if r.n == 2t - 1         // 根节点满
-3      s = B-TREE-SPLIT-ROOT(T)  // 分裂根节点
+2  if r.n == 2t - 1               // 根满
+3      s = B-TREE-SPLIT-ROOT(T)
 4      B-TREE-INSERT-NONFULL(s, k)
-5  else
-6      B-TREE-INSERT-NONFULL(r, k)
-```
+5  else B-TREE-INSERT-NONFULL(r, k)
 
-**B-TREE-SPLIT-ROOT**：
-
-```java
 B-TREE-SPLIT-ROOT(T)
 1  s = ALLOCATE-NODE()
 2  s.leaf = FALSE
 3  s.n = 0
-4  s.c1 = T.root
+4  s.c₁ = T.root
 5  T.root = s
 6  B-TREE-SPLIT-CHILD(s, 1)
 7  return s
 ```
 
-**根分裂图解**（t = 4）：
+根分裂（t=4，CLRS 图 18.6）：老根 r = [A D F H L N P] 已满，造新根 s，H 上移：
 
 ```mermaid
 graph TD
-    subgraph 分裂前
-    R["根节点r<br/>[C O R S T V X Y]<br/>8个键，满"]
+    subgraph Before["分裂前"]
+        R1["根 r<br/>A D F H L N P<br/>7 个键，已满"]
+    end
+    subgraph After["分裂后：树高 +1"]
+        S["新根 s<br/>H"] --> L["r 左半<br/>A D F"]
+        S --> R2["r 右半<br/>L N P"]
     end
 
-    R --> |分裂| R1["左半<br/>[C O R]<br/>4个键"]
-    R --> |中键T上移| NewRoot["新根s<br/>[T]<br/>1个键"]
-    R --> |右半部分| R2["[V X Y]<br/>3个键"]
-
-    NewRoot --> R1
-    NewRoot --> R2
-
-    style R fill:#f99,stroke:#333
-    style NewRoot fill:#ff9,stroke:#333,stroke-width:4px
-    style R1 fill:#9ff,stroke:#333
-    style R2 fill:#9ff,stroke:#333
+    classDef full fill:#EF9A9A,stroke:#C62828,color:#1f1f1f;
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f;
+    classDef half fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f;
+    class R1 full;
+    class S root;
+    class L,R2 half;
 ```
 
-**B-TREE-INSERT-NONFULL**：
+INSERT-NONFULL 向非满节点 x 插入 k：
 
-```java
+```text
 B-TREE-INSERT-NONFULL(x, k)
 1  i = x.n
-
-2  if x.leaf                    // 情况1：x是叶子
-3      // 向右移动比k大的键
-4      while i ≥ 1 and k < x.keyi
-5          x.key(i+1) = x.keyi
-6          i = i - 1
-7      x.key(i+1) = k           // 插入k
-8      x.n = x.n + 1
-9      DISK-WRITE(x)
-10 else                         // 情况2：x是内部节点
-11     // 找到应该进入的子节点
-12     while i ≥ 1 and k < x.keyi
-13         i = i - 1
-14     i = i + 1
-15     DISK-READ(x.ci)
-16
-17     // 预分裂：如果子节点已满
-18     if x.ci.n == 2t - 1
-19         B-TREE-SPLIT-CHILD(x, i)
-20         // 分裂后决定进入哪个子节点
-21         if k > x.keyi
-22             i = i + 1
-23
-24     // 递归插入
-25     B-TREE-INSERT-NONFULL(x.ci, k)
+2  if x.leaf                              // 情况 1：叶子，直接插入
+3      while i ≥ 1 and k < x.keyᵢ         // 比 k 大的键右移
+4          x.keyᵢ₊₁ = x.keyᵢ
+5          i = i - 1
+6      x.keyᵢ₊₁ = k
+7      x.n = x.n + 1
+8      DISK-WRITE(x)
+9  else while i ≥ 1 and k < x.keyᵢ        // 情况 2：内部节点，找下降的孩子
+10         i = i - 1
+11     i = i + 1
+12     DISK-READ(x.cᵢ)
+13     if x.cᵢ.n == 2t - 1                // 孩子是满的？先预分裂
+14         B-TREE-SPLIT-CHILD(x, i)
+15         if k > x.keyᵢ                  // 分裂后决定进哪一半
+16             i = i + 1
+17     B-TREE-INSERT-NONFULL(x.cᵢ, k)
 ```
 
-### 4.5 插入过程示例
+#### 插入完整示例（t=3，CLRS 图 18.7）
 
-**初始状态**（t = 3，最多5个键）：
+初始树（节点最多 5 键；满节点 [R S T U V] 已标红）：
 
 ```mermaid
 graph TD
-    Root["H P"]
-    Root --> L["A D G"]
-    Root --> M["K L M"]
-    Root --> R["Q R S T U V"]
+    R["G M P X"] --> A["A C D E"]
+    R --> B["J K"]
+    R --> C["N O"]
+    R --> D["R S T U V"]
+    R --> E["Y Z"]
 
-    style Root fill:#ff9,stroke:#333
-    style L fill:#9ff,stroke:#333
-    style M fill:#9ff,stroke:#333
-    style R fill:#f99,stroke:#333
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f;
+    classDef full fill:#EF9A9A,stroke:#C62828,color:#1f1f1f;
+    classDef plain fill:#90CAF9,stroke:#1976D2,color:#1f1f1f;
+    class R root;
+    class D full;
+    class A,B,C,E plain;
 ```
 
-**步骤1：插入B → 简单插入叶子**
+**(b) 插入 B**：叶子 [A C D E] 未满，简单插入 → [A B C D E]（其余不变）。
+
+**(c) 插入 Q**：下降途中发现 [R S T U V] 已满，预分裂为 [R S]、[U V]，中位数 T 上移进根；Q < T 进左半 → [Q R S]：
 
 ```mermaid
 graph TD
-    Root["H P"]
-    Root --> L["A B D G"]
-    Root --> M["K L M"]
-    Root --> R["Q R S T U V"]
+    R["G M P T X"] --> A["A B C D E"]
+    R --> B["J K"]
+    R --> C["N O"]
+    R --> D["Q R S"]
+    R --> E["U V"]
+    R --> F["Y Z"]
 
-    style L fill:#9f9,stroke:#333
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f;
+    classDef hot fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f;
+    classDef plain fill:#90CAF9,stroke:#1976D2,color:#1f1f1f;
+    class R root;
+    class D,E hot;
+    class A,B,C,F plain;
 ```
 
-**步骤2：插入Q → 右叶子分裂**
+**(d) 插入 L**：根 [G M P T X] 已满，先分裂根——新根 [P]，树高 +1；L 落入叶子 [J K] → [J K L]：
 
 ```mermaid
 graph TD
-    Root["H P T"]
-    Root --> L["A B D G"]
-    Root --> M["K L M"]
-    Root --> Mid["Q R"]
-    Root --> Right["S U V"]
+    R["P"] --> L1["G M"]
+    R --> R1["T X"]
+    L1 --> A["A B C D E"]
+    L1 --> B["J K L"]
+    L1 --> C["N O"]
+    R1 --> D["Q R S"]
+    R1 --> E["U V"]
+    R1 --> F["Y Z"]
 
-    style Root fill:#ff9,stroke:#333
-    style Mid fill:#9ff,stroke:#333
-    style Right fill:#9ff,stroke:#333
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f;
+    classDef hot fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f;
+    classDef plain fill:#90CAF9,stroke:#1976D2,color:#1f1f1f;
+    class R root;
+    class L1,R1,B hot;
+    class A,C,D,E,F plain;
 ```
 
-**步骤3：插入L → 根节点满，分裂**
+**(e) 插入 F**：叶子 [A B C D E] 已满，下降时预分裂——C 上移进父节点（[G M] → [C G M]），F > C 进右半 → [D E F]。这就是删除示例（4.4 节）的出发树：
 
 ```mermaid
 graph TD
-    NewRoot["P T"]
-    NewRoot --> Left["H K L M"]
-    NewRoot --> Right["Q R"] & Right2["S U V"]
+    R["P"] --> L1["C G M"]
+    R --> R1["T X"]
+    L1 --> A["A B"]
+    L1 --> B["D E F"]
+    L1 --> C["J K L"]
+    L1 --> C2["N O"]
+    R1 --> D["Q R S"]
+    R1 --> E["U V"]
+    R1 --> F["Y Z"]
 
-    style NewRoot fill:#ff9,stroke:#333,stroke-width:4px
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f;
+    classDef hot fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f;
+    classDef plain fill:#90CAF9,stroke:#1976D2,color:#1f1f1f;
+    class R root;
+    class L1,A,B hot;
+    class R1,C,C2,D,E,F plain;
 ```
 
-### 4.6 删除操作 B-TREE-DELETE
+插入的总代价：O(h) 次磁盘访问，O(t·h) = O(t·log_t n) CPU 时间。INSERT-NONFULL 是尾递归，可改写为 while 循环，内存中同时只需 O(1) 个块。
 
-**核心挑战**：删除可能导致节点键数少于t-1（欠载），需要合并或借位。
+### 4.4 删除 B-TREE-DELETE：最复杂的一战
 
-**三种主要情况：**
+第四版**没有给出删除的伪代码**（习题 18.3-2 让读者自己写），只描述情况分类；下文代码节给出完整实现。
 
-```mermaid
-flowchart TD
-    A[删除操作] --> B{被删节点类型}
+删除比插入麻烦在两点：可从**任意节点**（不只叶子）删键；删内部节点的键要重排孩子。策略与插入对称——**保证递归下降到的节点至少有 t 个键**（比最低要求 t-1 多 1 个余量），这样删除后不会欠载，单趟下行完成。
 
-    B -->|叶子| C[情况1：直接删除]
-    B -->|内部节点含k| D[情况2：找前驱/后继]
-    B -->|内部节点不含k| E[情况3：确保子节点有t个键]
+设当前搜索到节点 x（x 必有 ≥ t 键，根除外）：
 
-    C --> C1[简单删除]
+**情况 1：x 是叶子。** 若 k 在 x 中，直接删；不在则 k 本就不在树中，结束。
 
-    D --> D1[2a：前驱借位]
-    D --> D2[2b：后继借位]
-    D --> D3[2c：合并节点]
+**情况 2：x 是内部节点且含 k = x.keyᵢ。** 看 k 两侧的孩子 x.cᵢ、x.c_{i+1}：
+- **2a**：x.cᵢ 有 ≥ t 键 → 在 x.cᵢ 中找 k 的**前驱 k′**，递归删 k′，用 k′ 顶替 k 的位置。
+- **2b**：x.cᵢ 只有 t-1 键但 x.c_{i+1} 有 ≥ t 键 → 对称地用**后继 k′**。
+- **2c**：两侧都只有 t-1 键 → 把 k 和 x.c_{i+1} 整体**合并**进 x.cᵢ（得 2t-1 键），再从合并节点里递归删 k。
 
-    E --> E1[3a：兄弟借键]
-    E --> E2[3b：合并节点]
+**情况 3：x 是内部节点且不含 k。** 确定 k 应在的孩子 x.cᵢ；若它只有 t-1 键，先补足再下降：
+- **3a**：x.cᵢ 的某个紧邻兄弟有 ≥ t 键 → **借位**：x 的一个键下移进 x.cᵢ，兄弟的一个键上移进 x（连带搬一个子指针）。
+- **3b**：兄弟也都只有 t-1 键 → **合并**：x.cᵢ 与一个兄弟合并，x 下移一个键作为合并节点的中位数。
 
-    style C fill:#9f9,stroke:#333
-    style D1 fill:#ff9,stroke:#333
-    style D2 fill:#ff9,stroke:#333
-    style D3 fill:#f99,stroke:#333
-```
+合并若掏空根（2c/3b 中 x 是根且只剩 0 键），删掉空根、唯一孩子顶上——**树变矮的唯一方式**。
 
-**情况1：删除叶子节点**
-- 直接删除，不破坏B树性质
+#### 删除完整示例（t=3，CLRS 图 18.8）
 
-**情况2a：前驱借位**
-- 用前驱k'替代k，递归删除k'
-
-**情况2b：后继借位**
-- 用后继k'替代k，递归删除k'
-
-**情况2c：合并节点**
-- 前驱和后继合并，中间键下移
-
-**情况3a：从兄弟借键**
-- 父键下移，兄弟键上移
-
-**情况3b：合并子节点**
-- 父键下移，与兄弟合并
-
-**删除示例**（t=3）：
+出发树即 4.3 节 (e)。**(b) 删 F —— 情况 1**：搜索路径上的节点都有 ≥ t 键，叶子 [D E F] 直接删 → [D E]：
 
 ```mermaid
 graph TD
-    subgraph "删除前"
-    A["根P"] --> B["H K L"]
-    A --> C["Q R"]
-    A --> D["S T U V"]
-    end
+    R["P"] --> L1["C G M"]
+    R --> R1["T X"]
+    L1 --> A["A B"]
+    L1 --> B["D E"]
+    L1 --> C["J K L"]
+    L1 --> C2["N O"]
+    R1 --> D["Q R S"]
+    R1 --> E["U V"]
+    R1 --> F["Y Z"]
 
-    subgraph "删除F"
-    A2["根P"] --> B2["H K L"]
-    A2 --> C2["Q R"]
-    A2 --> D2["S T U V"]
-    end
-
-    style B fill:#f99,stroke:#333
-    style B2 fill:#9f9,stroke:#333
+    classDef hot fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f;
+    classDef plain fill:#90CAF9,stroke:#1976D2,color:#1f1f1f;
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f;
+    class R root;
+    class B hot;
+    class L1,R1,A,C,C2,D,E,F plain;
 ```
 
-**复杂度分析**：
-- **磁盘访问**：O(h) = O(log_t n)
-- **CPU时间**：O(t × h) = O(t log_t n)
+**(c) 删 M —— 情况 2a**：M 在内部节点 [C G M] 中，其左孩子 [J K L] 有 3 ≥ t 键 → 前驱 L 上移动顶替 M，叶子变 [J K]：
 
-## 五、Java代码实现详解
+```mermaid
+graph TD
+    R["P"] --> L1["C G L"]
+    R --> R1["T X"]
+    L1 --> A["A B"]
+    L1 --> B["D E"]
+    L1 --> C["J K"]
+    L1 --> C2["N O"]
+    R1 --> D["Q R S"]
+    R1 --> E["U V"]
+    R1 --> F["Y Z"]
 
-### 5.1 B树Java实现
+    classDef hot fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f;
+    classDef plain fill:#90CAF9,stroke:#1976D2,color:#1f1f1f;
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f;
+    class R root;
+    class L1,C hot;
+    class A,B,C2,R1,D,E,F plain;
+```
+
+**(d) 删 G —— 情况 2c**：G 在 [C G L] 中，两侧孩子 [D E]、[J K] 都只有 2 = t-1 键 → G 下移合并出 [D E G J K]，再从中删 G → [D E J K]；父节点剩 [C L]：
+
+```mermaid
+graph TD
+    R["P"] --> L1["C L"]
+    R --> R1["T X"]
+    L1 --> A["A B"]
+    L1 --> B["D E J K"]
+    L1 --> C2["N O"]
+    R1 --> D["Q R S"]
+    R1 --> E["U V"]
+    R1 --> F["Y Z"]
+
+    classDef hot fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f;
+    classDef plain fill:#90CAF9,stroke:#1976D2,color:#1f1f1f;
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f;
+    class R root;
+    class L1,B hot;
+    class A,C2,R1,D,E,F plain;
+```
+
+**(e) 删 D —— 情况 3b，树变矮**：下降目标是根的左孩子 [C L]，只有 2 键，兄弟 [T X] 也只有 2 键 → 根键 P 下移，三者合并成 [C L P T X]；根被掏空，合并节点成为**新根，树高 −1**。随后 D 落入叶子 [D E J K]（≥ t 键，可直接下降）删成 [E J K]：
+
+```mermaid
+graph TD
+    R["C L P T X"] --> A["A B"]
+    R --> B["E J K"]
+    R --> C2["N O"]
+    R --> D["Q R S"]
+    R --> E["U V"]
+    R --> F["Y Z"]
+
+    classDef hot fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f;
+    classDef plain fill:#90CAF9,stroke:#1976D2,color:#1f1f1f;
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f;
+    class R root;
+    class B hot;
+    class A,C2,D,E,F plain;
+```
+
+**(f) 删 B —— 情况 3a**：B 在叶子 [A B]（2 键）中，下降前先补足：右兄弟 [E J K] 有 3 ≥ t 键，借位——父键 C 下移、兄弟键 E 上移，叶子变 [A C]，再删 B。最终结果：根 [E L P T X]，叶子 [A]、[J K]、其余不变：
+
+```mermaid
+graph TD
+    R["E L P T X"] --> A["A"]
+    R --> B["J K"]
+    R --> C2["N O"]
+    R --> D["Q R S"]
+    R --> E["U V"]
+    R --> F["Y Z"]
+
+    classDef hot fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f;
+    classDef plain fill:#90CAF9,stroke:#1976D2,color:#1f1f1f;
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f;
+    class R root;
+    class A,B hot;
+    class C2,D,E,F plain;
+```
+
+删除同样是 O(h) 磁盘访问、O(t·h) CPU 时间。删内部节点的键时（2a/2b）看似「先下行找前驱再回头替换」，实则只需记住 x 的指针和键位，把前驱/后继直接写回，不用重新走一遍。
+
+## 五、代码实现（Java + Python）
+
+伪代码是 1-indexed，下面实现统一 **0-indexed**：`keyᵢ → keys[i-1]`，`cᵢ → c[i-1]`。与 CLRS 一致，**假设键互不相同**（插入前查重，重复键直接忽略）。两个实现均已通过：图 18.8 删除序列逐步断言 + 50 轮 × 2000 次随机增删与 `TreeSet`/`set` 对拍（每步校验键数界、键有序、叶子同深、子树范围）。
+
+### 5.1 Java
 
 ```java
+import java.util.ArrayList;
+import java.util.List;
+
+/** B树（最小度数 t >= 2），键为 int，0-indexed。对应 CLRS 第 18 章。 */
 public class BTree {
-    private BTreeNode root;
-    private final int t;  // 最小度数
-
-    public BTree(int t) {
-        this.t = t;
-        this.root = new BTreeNode(true);
-    }
-
-    public static class BTreeNode {
-        boolean leaf;
-        int n;  // 键数量
+    static class Node {
+        int n;
         int[] keys;
-        BTreeNode[] children;
+        Node[] c;
+        boolean leaf;
 
-        public BTreeNode(boolean leaf) {
-            this.leaf = leaf;
+        Node(int t, boolean leaf) {
             this.n = 0;
             this.keys = new int[2 * t - 1];
-            this.children = new BTreeNode[2 * t];
+            this.c = new Node[2 * t];
+            this.leaf = leaf;
         }
     }
 
-    // 搜索操作
-    public Pair<Integer, Integer> search(int k) {
-        return search(root, k);
+    private final int t;
+    private Node root;
+
+    public BTree(int t) {
+        if (t < 2) throw new IllegalArgumentException("t >= 2");
+        this.t = t;
+        this.root = new Node(t, true);
     }
 
-    private Pair<Integer, Integer> search(BTreeNode x, int k) {
+    // ---------- 搜索：B-TREE-SEARCH ----------
+    public boolean contains(int k) {
+        return search(root, k) != null;
+    }
+
+    private Node search(Node x, int k) {
         int i = 0;
-        while (i < x.n && k > x.keys[i]) {
-            i++;
-        }
-
-        if (i < x.n && k == x.keys[i]) {
-            return new Pair<>(x, i);
-        } else if (x.leaf) {
-            return null;
-        } else {
-            return search(x.children[i], k);
-        }
+        while (i < x.n && k > x.keys[i]) i++;
+        if (i < x.n && k == x.keys[i]) return x;
+        if (x.leaf) return null;
+        return search(x.c[i], k);
     }
 
-    // 插入操作
-    public void insert(int k) {
-        if (root.n == 2 * t - 1) {
-            BTreeNode s = new BTreeNode(false);
-            s.children[0] = root;
-            root = s;
-            splitChild(s, 0);
-            insertNonFull(s, k);
-        } else {
-            insertNonFull(root, k);
-        }
-    }
-
-    private void splitChild(BTreeNode x, int i) {
-        BTreeNode y = x.children[i];
-        BTreeNode z = new BTreeNode(y.leaf);
+    // ---------- 分裂：B-TREE-SPLIT-CHILD ----------
+    private void splitChild(Node x, int i) {
+        Node y = x.c[i];               // 满节点（2t-1 个键）
+        Node z = new Node(t, y.leaf);  // z 拿走 y 的右半部分
         z.n = t - 1;
-
-        // 复制y的后半部分键到z
-        for (int j = 0; j < t - 1; j++) {
-            z.keys[j] = y.keys[j + t];
-        }
-
-        // 复制y的后半部分子节点到z
+        for (int j = 0; j < t - 1; j++) z.keys[j] = y.keys[j + t];
         if (!y.leaf) {
-            for (int j = 0; j < t; j++) {
-                z.children[j] = y.children[j + t];
-            }
+            for (int j = 0; j < t; j++) z.c[j] = y.c[j + t];
         }
-
-        y.n = t - 1;
-
-        // 将z插入为x的子节点
-        for (int j = x.n; j >= i + 1; j--) {
-            x.children[j + 1] = x.children[j];
-        }
-        x.children[i + 1] = z;
-
-        // 将y的中间键上移到x
-        for (int j = x.n - 1; j >= i; j--) {
-            x.keys[j + 1] = x.keys[j];
-        }
-        x.keys[i] = y.keys[t - 1];
+        y.n = t - 1;                   // y 只留左半部分
+        for (int j = x.n; j > i; j--) x.c[j + 1] = x.c[j];   // 子指针右移
+        x.c[i + 1] = z;
+        for (int j = x.n - 1; j >= i; j--) x.keys[j + 1] = x.keys[j]; // 键右移
+        x.keys[i] = y.keys[t - 1];     // y 的中位数键上移
         x.n++;
     }
 
-    private void insertNonFull(BTreeNode x, int k) {
-        int i = x.n - 1;
+    // ---------- 插入：B-TREE-INSERT / -INSERT-NONFULL ----------
+    public void insert(int k) {
+        if (contains(k)) return;       // 与 CLRS 一致：假设键互不相同
+        Node r = root;
+        if (r.n == 2 * t - 1) {        // 根满：先分裂根（树长高的唯一方式）
+            Node s = new Node(t, false);
+            s.c[0] = r;
+            root = s;
+            splitChild(s, 0);
+        }
+        insertNonfull(root, k);
+    }
 
+    private void insertNonfull(Node x, int k) {
+        int i = x.n - 1;
         if (x.leaf) {
-            // 在适当位置插入k
             while (i >= 0 && k < x.keys[i]) {
                 x.keys[i + 1] = x.keys[i];
                 i--;
@@ -628,549 +535,370 @@ public class BTree {
             x.keys[i + 1] = k;
             x.n++;
         } else {
-            // 找到应该进入的子节点
-            while (i >= 0 && k < x.keys[i]) {
-                i--;
-            }
+            while (i >= 0 && k < x.keys[i]) i--;
             i++;
-
-            // 如果子节点已满，先分裂
-            if (x.children[i].n == 2 * t - 1) {
+            if (x.c[i].n == 2 * t - 1) {   // 下降前预分裂满孩子
                 splitChild(x, i);
-                if (k > x.keys[i]) {
-                    i++;
+                if (k > x.keys[i]) i++;
+            }
+            insertNonfull(x.c[i], k);
+        }
+    }
+
+    // ---------- 删除：B-TREE-DELETE（习题 18.3-2）----------
+    public void delete(int k) {
+        delete(root, k);
+        if (root.n == 0 && !root.leaf) root = root.c[0];  // 根被掏空：树变矮
+    }
+
+    private void delete(Node x, int k) {
+        int i = 0;
+        while (i < x.n && x.keys[i] < k) i++;
+        if (i < x.n && x.keys[i] == k) {
+            if (x.leaf) {                      // 情况 1：叶子，直接删
+                for (int j = i; j < x.n - 1; j++) x.keys[j] = x.keys[j + 1];
+                x.n--;
+            } else {                           // 情况 2：内部节点含 k
+                Node y = x.c[i], z = x.c[i + 1];
+                if (y.n >= t) {                // 2a：前驱借位
+                    int pred = maxKey(y);
+                    delete(y, pred);
+                    x.keys[i] = pred;
+                } else if (z.n >= t) {         // 2b：后继借位
+                    int succ = minKey(z);
+                    delete(z, succ);
+                    x.keys[i] = succ;
+                } else {                       // 2c：合并后递归删
+                    merge(x, i);
+                    delete(x.c[i], k);
                 }
             }
-
-            insertNonFull(x.children[i], k);
+        } else {
+            if (x.leaf) return;                // k 不在树中
+            Node child = x.c[i];
+            if (child.n == t - 1) {            // 情况 3：保证下降的孩子 >= t 键
+                Node left = i > 0 ? x.c[i - 1] : null;
+                Node right = i < x.n ? x.c[i + 1] : null;
+                if (left != null && left.n >= t) {         // 3a：左兄弟借
+                    for (int j = child.n; j > 0; j--) child.keys[j] = child.keys[j - 1];
+                    if (!child.leaf) {
+                        for (int j = child.n + 1; j > 0; j--) child.c[j] = child.c[j - 1];
+                        child.c[0] = left.c[left.n];
+                    }
+                    child.keys[0] = x.keys[i - 1];
+                    child.n++;
+                    x.keys[i - 1] = left.keys[left.n - 1];
+                    left.n--;
+                } else if (right != null && right.n >= t) { // 3a：右兄弟借
+                    child.keys[child.n] = x.keys[i];
+                    child.n++;
+                    if (!child.leaf) child.c[child.n] = right.c[0];
+                    x.keys[i] = right.keys[0];
+                    for (int j = 0; j < right.n - 1; j++) right.keys[j] = right.keys[j + 1];
+                    if (!right.leaf) {
+                        for (int j = 0; j < right.n; j++) right.c[j] = right.c[j + 1];
+                    }
+                    right.n--;
+                } else if (left != null) {                  // 3b：与左兄弟合并
+                    merge(x, i - 1);
+                    child = left;
+                } else {                                    // 3b：与右兄弟合并
+                    merge(x, i);
+                }
+            }
+            delete(child, k);
         }
+    }
+
+    /** 把 x.keys[i] 下移，x.c[i+1] 合并进 x.c[i]（得 2t-1 个键）。 */
+    private void merge(Node x, int i) {
+        Node y = x.c[i], z = x.c[i + 1];
+        y.keys[t - 1] = x.keys[i];
+        for (int j = 0; j < z.n; j++) y.keys[t + j] = z.keys[j];
+        if (!y.leaf) {
+            for (int j = 0; j <= z.n; j++) y.c[t + j] = z.c[j];
+        }
+        y.n = 2 * t - 1;
+        for (int j = i; j < x.n - 1; j++) x.keys[j] = x.keys[j + 1];
+        for (int j = i + 1; j < x.n; j++) x.c[j] = x.c[j + 1];
+        x.n--;
+    }
+
+    private int maxKey(Node x) {
+        while (!x.leaf) x = x.c[x.n];
+        return x.keys[x.n - 1];
+    }
+
+    private int minKey(Node x) {
+        while (!x.leaf) x = x.c[0];
+        return x.keys[0];
+    }
+
+    // ---------- 中序遍历（调试用）----------
+    public List<Integer> inorder() {
+        List<Integer> out = new ArrayList<>();
+        inorder(root, out);
+        return out;
+    }
+
+    private void inorder(Node x, List<Integer> out) {
+        for (int i = 0; i < x.n; i++) {
+            if (!x.leaf) inorder(x.c[i], out);
+            out.add(x.keys[i]);
+        }
+        if (!x.leaf) inorder(x.c[x.n], out);
     }
 }
 ```
 
-## 六、具体例子演示
+### 5.2 Python
 
-### 6.1 搜索过程演示
+```python
+class BTree:
+    """B树（最小度数 t >= 2），键为 int，0-indexed。对应 CLRS 第 18 章。"""
 
-**场景**：在B树中搜索键38（t=3）
+    class Node:
+        __slots__ = ("n", "keys", "c", "leaf")
 
-```mermaid
-graph TD
-    subgraph 初始树
-    R["根: 25 42"]
-    R --> A["10 18 21"]
-    R --> B["28 30 35"]
-    R --> C["50 55 60"]
+        def __init__(self, t, leaf):
+            self.n = 0
+            self.keys = [0] * (2 * t - 1)
+            self.c = [None] * (2 * t)
+            self.leaf = leaf
 
-    A --> A1["3 5 7"]
-    A --> A2["12 14 16"]
-    A --> A3["19 20"]
+    def __init__(self, t):
+        assert t >= 2
+        self.t = t
+        self.root = self.Node(t, True)
 
-    B --> B1["26 27"]
-    B --> B2["29 31 33"]
-    B --> B3["36 38 40"]
+    # ---------- 搜索：B-TREE-SEARCH ----------
+    def search(self, k, x=None):
+        x = self.root if x is None else x
+        i = 0
+        while i < x.n and k > x.keys[i]:
+            i += 1
+        if i < x.n and k == x.keys[i]:
+            return (x, i)
+        if x.leaf:
+            return None
+        return self.search(k, x.c[i])
 
-    C --> C1["45 48"]
-    C --> C2["52 53"]
-    C --> C3["58 62 65"]
-    end
+    # ---------- 分裂：B-TREE-SPLIT-CHILD ----------
+    def _split_child(self, x, i):
+        t = self.t
+        y = x.c[i]                # 满节点（2t-1 个键）
+        z = self.Node(t, y.leaf)  # z 拿走 y 的右半部分
+        z.n = t - 1
+        for j in range(t - 1):
+            z.keys[j] = y.keys[j + t]
+        if not y.leaf:
+            for j in range(t):
+                z.c[j] = y.c[j + t]
+        y.n = t - 1               # y 只留左半部分
+        for j in range(x.n, i, -1):          # x 的子指针右移，腾出 i+1
+            x.c[j + 1] = x.c[j]
+        x.c[i + 1] = z
+        for j in range(x.n - 1, i - 1, -1):  # x 的键右移
+            x.keys[j + 1] = x.keys[j]
+        x.keys[i] = y.keys[t - 1]            # y 的中位数键上移
+        x.n += 1
 
-    R --> |比较25<38<42<br/>进入B| B
-    B --> |比较30<38<35?<br/>35<38，进入B3| B3
-    B3 --> |线性搜索<br/>找到38| Found["38在位置2"]
+    # ---------- 插入：B-TREE-INSERT / -INSERT-NONFULL ----------
+    def insert(self, k):
+        if self.search(k) is not None:   # 与 CLRS 一致：假设键互不相同
+            return
+        t = self.t
+        r = self.root
+        if r.n == 2 * t - 1:      # 根满：先分裂根（树长高的唯一方式）
+            s = self.Node(t, False)
+            s.c[0] = r
+            self.root = s
+            self._split_child(s, 0)
+        self._insert_nonfull(self.root, k)
 
-    style Found fill:#9f9,stroke:#333,stroke-width:4px
-    style R fill:#ff9,stroke:#333
-    style B fill:#ff9,stroke:#333
-    style B3 fill:#ff9,stroke:#333
+    def _insert_nonfull(self, x, k):
+        i = x.n - 1
+        if x.leaf:
+            while i >= 0 and k < x.keys[i]:
+                x.keys[i + 1] = x.keys[i]
+                i -= 1
+            x.keys[i + 1] = k
+            x.n += 1
+        else:
+            while i >= 0 and k < x.keys[i]:
+                i -= 1
+            i += 1
+            if x.c[i].n == 2 * self.t - 1:   # 下降前预分裂满孩子
+                self._split_child(x, i)
+                if k > x.keys[i]:
+                    i += 1
+            self._insert_nonfull(x.c[i], k)
+
+    # ---------- 删除：B-TREE-DELETE（习题 18.3-2）----------
+    def delete(self, k):
+        self._delete(self.root, k)
+        if self.root.n == 0 and not self.root.leaf:  # 根被掏空：树变矮
+            self.root = self.root.c[0]
+
+    def _delete(self, x, k):
+        t = self.t
+        i = 0
+        while i < x.n and x.keys[i] < k:
+            i += 1
+        if i < x.n and x.keys[i] == k:
+            if x.leaf:                       # 情况 1：叶子，直接删
+                for j in range(i, x.n - 1):
+                    x.keys[j] = x.keys[j + 1]
+                x.n -= 1
+            else:                            # 情况 2：内部节点含 k
+                y, z = x.c[i], x.c[i + 1]
+                if y.n >= t:                 # 2a：前驱借位
+                    pred = self._max_key(y)
+                    self._delete(y, pred)
+                    x.keys[i] = pred
+                elif z.n >= t:               # 2b：后继借位
+                    succ = self._min_key(z)
+                    self._delete(z, succ)
+                    x.keys[i] = succ
+                else:                        # 2c：合并后递归删
+                    self._merge(x, i)
+                    self._delete(x.c[i], k)
+        else:
+            if x.leaf:
+                return                       # k 不在树中
+            child = x.c[i]
+            if child.n == t - 1:             # 情况 3：保证下降的孩子 >= t 键
+                left = x.c[i - 1] if i > 0 else None
+                right = x.c[i + 1] if i < x.n else None
+                if left is not None and left.n >= t:       # 3a：左兄弟借
+                    for j in range(child.n, 0, -1):
+                        child.keys[j] = child.keys[j - 1]
+                    if not child.leaf:
+                        for j in range(child.n + 1, 0, -1):
+                            child.c[j] = child.c[j - 1]
+                        child.c[0] = left.c[left.n]
+                    child.keys[0] = x.keys[i - 1]
+                    child.n += 1
+                    x.keys[i - 1] = left.keys[left.n - 1]
+                    left.n -= 1
+                elif right is not None and right.n >= t:   # 3a：右兄弟借
+                    child.keys[child.n] = x.keys[i]
+                    child.n += 1
+                    if not child.leaf:
+                        child.c[child.n] = right.c[0]
+                    x.keys[i] = right.keys[0]
+                    for j in range(right.n - 1):
+                        right.keys[j] = right.keys[j + 1]
+                    if not right.leaf:
+                        for j in range(right.n):
+                            right.c[j] = right.c[j + 1]
+                    right.n -= 1
+                elif left is not None:                     # 3b：与左兄弟合并
+                    self._merge(x, i - 1)
+                    child = left
+                else:                                      # 3b：与右兄弟合并
+                    self._merge(x, i)
+            self._delete(child, k)
+
+    def _merge(self, x, i):
+        """把 x.keys[i] 下移，x.c[i+1] 合并进 x.c[i]（得 2t-1 个键）。"""
+        t = self.t
+        y, z = x.c[i], x.c[i + 1]
+        y.keys[t - 1] = x.keys[i]
+        for j in range(z.n):
+            y.keys[t + j] = z.keys[j]
+        if not y.leaf:
+            for j in range(z.n + 1):
+                y.c[t + j] = z.c[j]
+        y.n = 2 * t - 1
+        for j in range(i, x.n - 1):
+            x.keys[j] = x.keys[j + 1]
+        for j in range(i + 1, x.n):
+            x.c[j] = x.c[j + 1]
+        x.n -= 1
+
+    def _max_key(self, x):
+        while not x.leaf:
+            x = x.c[x.n]
+        return x.keys[x.n - 1]
+
+    def _min_key(self, x):
+        while not x.leaf:
+            x = x.c[0]
+        return x.keys[0]
+
+    # ---------- 中序遍历（调试用）----------
+    def inorder(self, x=None, out=None):
+        if out is None:
+            out = []
+        if x is None:
+            x = self.root
+        for i in range(x.n):
+            if not x.leaf:
+                self.inorder(x.c[i], out)
+            out.append(x.keys[i])
+        if not x.leaf:
+            self.inorder(x.c[x.n], out)
+        return out
 ```
 
-**搜索步骤表：**
+## 六、复杂度速查 + 易混点
 
-| 步骤 | 当前节点 | 比较 | 动作 |
-|-----|---------|-----|-----|
-| 1 | [25, 42] | 38 > 25 且 38 < 42 | 进入右子节点B |
-| 2 | [28, 30, 35] | 38 > 35 | 进入右子节点B3 |
-| 3 | [36, 38, 40] | 38 == 38 | 找到，返回 |
+### 6.1 速查表
 
-### 6.2 插入过程演示
+| 操作 | 磁盘访问 | CPU 时间 |
+|------|---------|---------|
+| 搜索 | O(h) = O(log_t n) | O(t·h) = O(t·log_t n)（节点内二分可降到 O(lg n)，习题 18.2-6） |
+| 插入 | O(h) | O(t·h) |
+| 删除 | O(h) | O(t·h) |
+| 建空树 | O(1) | O(1) |
 
-**场景**：按顺序插入 F, S, Q, K, C, L, H（t=3）
+**t 怎么选**（习题 18.2-7）：设读一个块耗时 a + bt（a 固定延迟，b 每键传输），搜索时间 ≈ (a + bt)·log_t n，最小化得 **bt(ln t − 1) = a**。a = 5 ms、b = 10 μs 时 t ≈ 130。工程惯例分支因子 50~2000，直接让节点填满一个磁盘块即可。
 
-**初始状态**（空树）：
+### 6.2 易混点对比
 
-```mermaid
-graph TD
-    Empty["[]<br/>根节点"]
-    style Empty fill:#ff9,stroke:#333
-```
+| 易混点 | 辨析 |
+|--------|------|
+| 键数界 vs 孩子数界 | 非根节点：键 ∈ [t-1, 2t-1]，孩子 ∈ [t, 2t]；**根唯一例外**：可以只有 1 个键 |
+| 「满」与「最少」 | 满 = 2t-1 键（插入时分裂的对象）；最少 = t-1 键（删除时借位/合并的警戒线） |
+| 长高 vs 变矮 | 长高只在**根分裂**；变矮只在**根被掏空**（2c/3b 合并后删除空根）——都发生在顶部 |
+| 预分裂 vs 预借/预合 | 插入下降时分裂满孩子（防过满）；删除下降时给 t-1 键的孩子补足到 t 键（防欠载）——都为保证**单趟下行不回溯** |
+| 磁盘访问 vs CPU | 磁盘看树高 h，CPU 还要乘节点内扫描的 O(t)；两笔账分开算 |
+| 2-3-4 树 vs 红黑树 | t=2 的 B 树就是 2-3-4 树；红黑树黑节点吸收红孩子 = 2-3-4 树节点（习题 18.1-5），插入的「分裂」对应红黑树的「变色/旋转」 |
+| B 树 vs B+ 树 | B+ 树把数据全放叶子、内部节点只存键（分支因子更大），叶子用链表串起来 → 范围查询只定位起点后顺序扫。数据库索引普遍用 B+ 树 |
+| B* 树 | 变体：要求节点至少 2/3 满（而非一半），空间利用率更高（CLRS 脚注） |
 
-**步骤1：插入F → 简单插入**
+## 七、LeetCode 题单 + 习题
 
-```mermaid
-graph TD
-    Root["[F]"]
-    style Root fill:#9f9,stroke:#333
-```
+**定位**：面试不考手写 B 树，考的是「多路平衡 + 按块读写」的思想和 B+ 树索引的概念（为什么数据库索引用 B+ 树而不用二叉树/哈希表：树矮 → I/O 少；叶子有序链表 → 范围查询快）。做题方面对应的是**分块 / 有序容器范围操作**：
 
-**步骤2：插入S → 简单插入**
+| 题号 | 题目 | 难度 | 考点 |
+|------|------|------|------|
+| 352 | 将数据流变为多个不相交区间 | 困难 | TreeMap 范围操作 ≈ B+ 树叶子链表上的区间扫描 |
+| 2296 | 设计一个文本编辑器 | 困难 | 块状链表 / 分块——「节点 = 一块」思想的内存版 |
+| 307 | 区域和检索 - 数组可修改 | 中等 | 分块思想入门（对比树状数组/线段树） |
 
-```mermaid
-graph TD
-    Root["[F S]"]
-    style Root fill:#9f9,stroke:#333
-```
+**习题快问快答**（第四版编号）：
 
-**步骤3：插入Q → 简单插入（3个键，未满）**
+- **18.1-1** t=1 为何不行？节点最少 t-1 = 0 个键，空节点毫无意义；且满节点只有 1 个键，分裂时中位数上移后两边都是空的，树无法正常工作。
+- **18.1-2** 图 18.1 对哪些 t 合法？t ∈ {2, 3}：节点最多 3 键 ⇒ 2t-1 ≥ 3 ⇒ t ≥ 2；非根最少 2 键 ⇒ t-1 ≤ 2 ⇒ t ≤ 3。
+- **18.1-4** 高度 h 最多装多少键？每层全满求和：(2t)^(h+1) − 1。
+- **18.2-3** Bunyan 教授断言 B-TREE-INSERT 总产生最小高度的树——错：t=2 时 {1,…,15} 的任何插入序列都得不到高度 2（最小）的树。
+- **18.2-6** 节点内改二分查找：每层 CPU O(lg t)，总 O(h·lg t) = O(lg n)，与 t 无关。
+- **18.2-7** 选 t 最小化 (a+bt)·log_t n ⇒ bt(ln t − 1) = a；a=5 ms、b=10 μs 时 t ≈ 130。
+- **18.3-2** 写 B-TREE-DELETE 伪代码 → 见第五节，Java/Python 实现与情况 1/2a/2b/2c/3a/3b 一一对应。
 
-```mermaid
-graph TD
-    Root["[F Q S]"]
-    style Root fill:#9ff,stroke:#333
-```
+**思考题**：
 
-**步骤4：插入K → 叶子分裂**
+- **18-1 磁盘上的栈**：朴素实现每次操作一次 I/O；内存缓存 1 块最坏仍 O(n)；缓存 **2 块**（当前块 + 相邻块，写回滞后）可得摊还 O(1/m) 次磁盘访问、O(1) CPU。
+- **18-2 2-3-4 树的 join 与 split**：给每个节点维护子树高度属性；join 沿高树边缘下行 O(|h′ − h″|)；split 沿搜索路径把两侧拆成若干子树再逐个 join，代价伸缩相消（telescoping）共 O(lg n)。
 
-```mermaid
-graph TD
-    NewRoot["[Q]"]
-    NewRoot --> L["[F K]"]
-    NewRoot --> R["[S]"]
-
-    style NewRoot fill:#ff9,stroke:#333,stroke-width:4px
-    style L fill:#9ff,stroke:#333
-    style R fill:#9ff,stroke:#333
-```
-
-**步骤5：插入C → 简单插入**
-
-```mermaid
-graph TD
-    NewRoot["[Q]"]
-    NewRoot --> L["[C F K]"]
-    NewRoot --> R["[S]"]
-
-    style L fill:#9ff,stroke:#333
-```
-
-**步骤6：插入L → 简单插入**
-
-```mermaid
-graph TD
-    NewRoot["[Q]"]
-    NewRoot --> L["[C F K L]"]
-    NewRoot --> R["[S]"]
-
-    style L fill:#9ff,stroke:#333
-```
-
-**步骤7：插入H → 叶子分裂，树长高**
-
-```mermaid
-graph TD
-    FinalRoot["[K Q]"]
-    FinalRoot --> L1["[C F H]"]
-    FinalRoot --> M["[L]"]
-    FinalRoot --> R1["[S]"]
-
-    style FinalRoot fill:#ff9,stroke:#333,stroke-width:4px
-    style L1 fill:#9ff,stroke:#333
-    style M fill:#9ff,stroke:#333
-    style R1 fill:#9ff,stroke:#333
-```
-
-### 6.3 删除过程演示
-
-**场景**：从B树中删除G（t=3）
-
-**删除前**：
-
-```mermaid
-graph TD
-    R["[P T]"]
-    R --> A["[H K L M]"]
-    R --> B["[Q R]"]
-    R --> C["[S U V]"]
-
-    A --> A1["[D E F]"]
-    A --> A2["[G]"] --> |要删除G| Target
-    A --> A3["[J N]"]
-
-    style Target fill:#f99,stroke:#333
-```
-
-**删除G（情况1：叶子直接删除）**：
-
-```mermaid
-graph TD
-    R["[P T]"]
-    R --> A["[H K L M]"]
-    R --> B["[Q R]"]
-    R --> C["[S U V]"]
-
-    A --> A1["[D E F]"]
-    A --> A2["[已删除G]"]
-    A --> A3["[J N]"]
-```
-
-**修复欠载节点**（合并F和J）：
-
-```mermaid
-graph TD
-    R["[P T]"]
-    R --> A["[H K L M]"]
-    R --> B["[Q R]"]
-    R --> C["[S U V]"]
-
-    A --> A1["[D E F J N]"]
-
-    style A fill:#ff9,stroke:#333
-    style A1 fill:#9f9,stroke:#333
-```
-
-## 七、复杂度分析
-
-### 7.1 操作复杂度对比表
-
-| 操作 | 时间复杂度 | 空间复杂度 | 磁盘访问次数 |
-|-----|-----------|-----------|-------------|
-| 搜索 | O(t log_t n) | O(n) | O(log_t n) |
-| 插入 | O(t log_t n) | O(n) | O(log_t n) |
-| 删除 | O(t log_t n) | O(n) | O(log_t n) |
-| 创建 | O(1) | O(1) | O(1) |
-| 遍历 | O(n) | O(n) | O(n/t + h) |
-
-### 7.2 B树 vs 红黑树
-
-| 指标 | 红黑树 | B树（t=100） | B树（t=1000） |
-|-----|-------|-------------|---------------|
-| 分支因子 | 2 | 100-200 | 1000-2000 |
-| 10亿条记录高度 | ~30 | 3 | 2 |
-| 单次查找磁盘访问 | 30 | 3 | 2 |
-| 插入磁盘访问 | 30 | 3 | 2 |
-
-### 7.3 t值的选择
-
-**t的理论最优值**：基于磁盘访问时间模型 a + bt
-
-- a：固定访问延迟（~5ms）
-- b：每字节传输时间（~10μs）
-- 块大小由t决定
-
-**优化目标**：最小化搜索时间
-
-```
-搜索时间 ≈ a × log_t n + b × t × log_t n
-```
-
-**求导找最优解**：
-- 对t求导并设为0
-- 实际应用中t通常在50-2000之间
-
-## 八、B树变种
-
-### 8.1 B+树
-
-```mermaid
-graph TD
-    subgraph "B+树结构"
-    Root["根<br/>[30 60 90]"]
-    Root --> L["[10 20]<br/>叶"] & M["[30 40 50]<br/>叶"] & R["[60 70 80 90]<br/>叶"]
-
-    L --> Data1["数据1"] & Data2["数据2"]
-    M --> Data3["数据3"] & Data4["数据4"] & Data5["数据5"]
-    R --> Data6["数据6"] & Data7["数据7"]
-
-    Leaf["所有数据都在叶子<br/>内部节点只存键"]
-    end
-
-    style Root fill:#ff9,stroke:#333
-    style L fill:#9ff,stroke:#333
-    style M fill:#9ff,stroke:#333
-    style R fill:#9ff,stroke:#333
-```
-
-**B+树 vs B树**：
-
-| 特性 | B树 | B+树 |
-|-----|-----|-----|
-| 数据存储位置 | 内部节点和叶子 | 仅叶子 |
-| 内部节点存储 | 键+数据指针 | 仅键 |
-| 叶子节点 | 不一定有序 | 通过链表连接 |
-| 范围查询 | 效率较低 | 效率高 |
-| 空间利用率 | 较低 | 更高 |
-| 分支因子 | 较小 | 更大 |
-
-### 8.2 B*树
-
-- 要求节点至少2/3满（而非1/2）
-- 分裂时将两个满节点合并成三个节点
-- 更高的空间利用率
-
-### 8.3 B#树
-
-- 支持多属性索引
-- 适用于空间数据库
-
-## 九、数据库应用深入分析
-
-### 9.1 关系型数据库中的索引
-
-```mermaid
-flowchart TD
-    subgraph 数据库存储
-    A[数据页] --> B[索引结构]
-    B --> C[B+树索引]
-    B --> D[哈希索引]
-    B --> E[全文索引]
-    end
-
-    subgraph B+树索引
-    F["内部节点<br/>索引页"] --> G["叶节点<br/>数据页指针"]
-    G --> H["row_id → 数据位置"]
-    end
-
-    style C fill:#9f9,stroke:#333
-    style F fill:#ff9,stroke:#333
-    style G fill:#9ff,stroke:#333
-```
-
-**MySQL InnoDB的B+树索引**：
-
-```mermaid
-graph TD
-    subgraph "InnoDB聚簇索引"
-    Root["根页面<br/>(Page 1)"] --> Level1_1["Page 2<br/>索引: id=100,500,1000"] & Level1_2["Page 3<br/>索引: id=1500,2000"]
-
-    Level1_1 --> Leaf1["Page 10<br/>id=1-100的完整行数据"] & Leaf2["Page 11<br/>id=101-500的完整行数据"]
-    Level1_2 --> Leaf3["Page 20<br/>id=501-1000的完整行数据"] & Leaf4["Page 21<br/>id=1001-2000的完整行数据"]
-    end
-
-    style Root fill:#ff9,stroke:#333,stroke-width:4px
-    style Leaf1 fill:#9f9,stroke:#333
-    style Leaf2 fill:#9f9,stroke:#333
-    style Leaf3 fill:#9f9,stroke:#333
-    style Leaf4 fill:#9f9,stroke:#333
-```
-
-**二级索引（辅助索引）**：
-
-```mermaid
-graph TD
-    subgraph 二级索引结构
-    IRoot["根: age=25,35,50"] --> I1["age=10,15,20"] & I2["age=25,30"] & I3["age=35,40"]
-
-    I1 --> D1["row_id=5"] & D2["row_id=12"]
-    I2 --> D3["row_id=3"] & D4["row_id=8"]
-    I3 --> D5["row_id=1"] & D6["row_id=15"]
-    end
-
-    subgraph 数据回表
-    D3 --> |回表查询| ActualRow["聚簇索引中的完整行"]
-    end
-
-    style IRoot fill:#ff9,stroke:#333
-    style ActualRow fill:#9f9,stroke:#333
-```
-
-### 9.2 实际应用场景
-
-```mermaid
-graph LR
-    subgraph 应用领域
-    A[关系数据库] --> B[InnoDB, MyISAM]
-    C[文件系统] --> D[NTFS, HFS+]
-    E[键值存储] --> F[LMDB, RocksDB]
-    G[搜索引擎] --> H[Elasticsearch]
-    end
-
-    B --> I[B+树]
-    D --> I
-    F --> I
-    H --> I
-
-    style I fill:#9f9,stroke:#333,stroke-width:4px
-```
-
-### 9.3 各数据库系统的索引实现
-
-**MySQL (InnoDB)**：
-- 聚簇索引：数据直接存在B+树叶节点
-- 二级索引：叶节点存储主键值
-- 所有索引都是B+树
-
-**PostgreSQL**：
-- 默认使用B+树
-- 支持多种索引类型（B+树、哈希、GIN、GiST）
-- B+树支持部分索引和表达式索引
-
-**Oracle**：
-- 使用B树索引
-- 支持索引组织表（Index-Organized Tables）
-- 支持位图索引（Bitmap Index）
-
-**SQLite**：
-- 默认B树实现
-- 默认为B+树
-
-### 9.4 大规模数据示例
-
-**场景**：10亿用户表的索引
-
-```mermaid
-graph TD
-    subgraph "10亿用户表的B+树索引（t=1000）"
-    Root["根节点<br/>1个键"]
-    Root --> Level1["1000个节点<br/>每节点1000个键"]
-    Level1 --> Level2["1,000,000个节点<br/>每节点1000个键"]
-    Level2 --> Leaves["1,000,000,000个叶子<br/>每节点1000个用户"]
-    end
-
-    Root --> |1次IO| Level1
-    Level1 --> |1次IO| Level2
-    Level2 --> |1次IO| Leaves
-
-    Total["总共3次IO找到用户"]
-
-    style Root fill:#ff9,stroke:#333,stroke-width:4px
-    style Total fill:#9f9,stroke:#333
-```
-
-### 9.5 范围查询优化
-
-```mermaid
-graph TD
-    subgraph B+树范围查询
-    Root["[30 60 90]"]
-    Root --> L["[10 20]"] & M["[30 40 50 60]"] & R["[70 80 90 100]"]
-
-    M --> ML1["[30 31 32...39]"] & ML2["[40 41 42...49]"] & ML3["[50 51 52...59]"]
-    ML1 --> |命中| Result1["数据1"]
-    ML2 --> |命中| Result2["数据2"]
-    ML3 --> |命中| Result3["数据3"]
-    end
-
-    subgraph "查找50-55"
-    Start["定位到30"] --> |向右遍历| End["定位到60"]
-    End --> |返回区间内数据| RangeResult["返回所有50-55的数据"]
-    end
-
-    style Root fill:#ff9,stroke:#333
-    style M fill:#ff9,stroke:#333
-```
-
-**B+树范围查询优势**：
-1. 只需定位起始点
-2. 叶子节点通过链表连接，支持顺序访问
-3. 无需回溯
-
-## 十、举一反三
-
-### 10.1 同类LeetCode题目
-
-| 题目 | 链接 | 核心思想 |
-|-----|------|---------|
-| 23. 合并K个升序链表 | https://leetcode.cn/problems/merge-k-sorted-lists/ | B树多路归并思想 |
-| 378. 有序矩阵中第K小的元素 | https://leetcode.cn/problems/kth-smallest-element-in-a-sorted-matrix/ | 多路归并/堆 |
-| 703. 数据流中的第K大元素 | https://leetcode.cn/problems/kth-largest-element-in-a-stream/ | 树/堆结构 |
-| 315. 计算右侧小于当前元素的个数 | https://leetcode.cn/problems/count-of-smaller-numbers-after-self/ | BST变种 |
-
-### 10.2 变形题目
-
-**B树的扩展应用**：
-- 支持并发访问的B树（锁粒度设计）
-- 持久化B树（写入日志）
-- 压缩B树（存储压缩后的键）
-- 前缀B树（仅存储键前缀）
-
-### 10.3 核心思想的迁移
-
-```mermaid
-flowchart TD
-    A((B树核心思想)) --> B[多路分叉减少高度]
-    A --> C[节点与块大小对齐]
-    A --> D[预分裂保证单次遍历]
-    A --> E[平衡保证最坏情况性能]
-
-    B --> B1[跳表：多级索引]
-    B --> B2[LSM树：分层合并]
-    B --> B3[Trie树：字符串多路]
-
-    C --> C1[LSM树：SSTable]
-    C --> C2[列式存储：列块压缩]
-
-    D --> D1[2PC：两阶段提交]
-    D --> D2[乐观并发控制]
-
-    E --> E1[红黑树：颜色平衡]
-    E --> E2[AVL树：高度平衡]
-
-    style A fill:#ff9,stroke:#333,stroke-width:4px
-```
-
-### 10.4 B树与LSM树的对比
-
-| 特性 | B树/B+树 | LSM树 |
-|-----|---------|-------|
-| 写入策略 | 原地更新 | 顺序写入 |
-| 空间放大 | 低 | 较高（压缩） |
-| 读取性能 | O(log n) | O(log n)但有放大 |
-| 写入放大 | 无 | 有 |
-| 适用场景 | 读多写少 | 写多读少 |
-| 典型系统 | MySQL, PostgreSQL | LevelDB, RocksDB |
-
-## 十一、总结
-
-### 11.1 核心要点回顾
-
-```mermaid
-flowchart TD
-    A[B树核心要点] --> B[1. 设计动机]
-    A --> C[2. 数据结构定义]
-    A --> D[3. 基本操作]
-    A --> E[4. 复杂度分析]
-    A --> F[5. 实际应用]
-
-    B --> B1[磁盘访问优化]
-    B --> B2[多路搜索]
-
-    C --> C1[最小度数t]
-    C --> C2[节点键数：t-1到2t-1]
-    C --> C3[所有叶子深度相同]
-
-    D --> D1["搜索：O(log t n)"]
-    D --> D2[插入：预分裂]
-    D --> D3[删除：合并/借位]
-
-    E --> E1["树高：O(log t n)"]
-    E --> E2["磁盘访问：O(log t n)"]
-    E --> E3["CPU时间：O(t log t n)"]
-
-    F --> F1[B+树主导数据库索引]
-    F --> F2[文件系统广泛使用]
-    F --> F3[NoSQL存储引擎]
-
-    style A fill:#ff9,stroke:#333,stroke-width:4px
-```
-
-### 11.2 为什么B树如此重要
-
-1. **数据库基石**：几乎所有关系型数据库都使用B+树作为默认索引
-2. **理论优美**：O(log n)时间复杂度保证最坏情况性能
-3. **实践高效**：最小化磁盘IO，适应磁盘特性
-4. **扩展性强**：分支因子可调，适应不同硬件
-
-### 11.3 未来展望
-
-- **持久化内存**：B树如何适应新型存储介质
-- **并发优化**：更细粒度的锁和乐观并发控制
-- **压缩集成**：与列式存储和压缩算法的深度集成
+**章末注记**：2-3 树由 Hopcroft 于 1970 年发明；B 树由 Bayer 和 McCreight 于 1972 年提出，名字含义从未解释；Comer 的《The Ubiquitous B-Tree》是经典综述；Bender、Demaine、Farach-Colton 的 cache-oblivious 算法在不知道块大小的情况下也能达到类似性能。
 
 ---
 
 ## 参考资料
 
-- Cormen, T. H., Leiserson, C. E., Rivest, R. L., & Stein, C. (2009). *Introduction to Algorithms* (3rd ed.). MIT Press.
-- Chapter 18: B-Trees, pp. 655-682
-- Comer, D. (1979). "The Ubiquitous B-Tree". ACM Computing Surveys.
-- Bayer, R., & McCreight, E. (1972). "Organization and Maintenance of Large Indexed Files". Acta Informatica.
+- Cormen, T. H., Leiserson, C. E., Rivest, R. L., & Stein, C. (2022). *Introduction to Algorithms* (4th ed.). MIT Press. Chapter 18: B-Trees, pp. 497–519.
+- Comer, D. (1979). "The Ubiquitous B-Tree". *ACM Computing Surveys*.
+- Bayer, R., & McCreight, E. (1972). "Organization and Maintenance of Large Ordered Indices". *Acta Informatica*.

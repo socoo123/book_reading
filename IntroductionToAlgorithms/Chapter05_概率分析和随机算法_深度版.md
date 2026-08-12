@@ -1,1113 +1,406 @@
 # 第五章：概率分析和随机算法
 
-## 一、概率分析基础
-
-### 1.1 为什么需要概率分析
-
-在分析算法时，如果输入数据是**随机的**或者算法本身是**随机的**，我们使用概率分析来确定算法的**期望性能**。
-
-```mermaid
-graph TD
-    A["概率分析"] --> B["确定性分析"]
-    A --> C["概率分析"]
-
-    B --> B1["最坏情况输入"]
-    B --> B2["确定的时间上界"]
-
-    C --> C1["随机输入分布"]
-    C --> C2["期望运行时间"]
-    C --> C3["平均情况性能"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 1.2 概率论回顾
-
-```mermaid
-graph TD
-    A["概率论基础"] --> B["随机变量"]
-    A --> C["期望值"]
-    A --> D["方差"]
-    A --> E["指示随机变量"]
-
-    B --> B1["离散型：取值有限"]
-    B --> B2["连续型：取值无限"]
-
-    C --> C1["E[X] = Σx·Px"]
-    C --> C2["线性性质"]
-
-    D --> D1["VarX = EX² - (EX)²"]
-    D --> D2["衡量波动程度"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 1.3 随机变量与期望
-
-```java
-import java.util.Random;
-
-/**
- * 概率论基础示例
- */
-public class ProbabilityBasics {
-
-    /**
-     * 离散随机变量示例：掷骰子
-     */
-    public static class DiceExample {
-
-        // 随机变量 X：骰子点数
-        // P(X = k) = 1/6，k = 1, 2, 3, 4, 5, 6
-
-        /**
-         * 计算骰子的期望值
-         * E[X] = Σk·P(X=k) = (1+2+3+4+5+6)/6 = 3.5
-         */
-        public static double expectedValue() {
-            double sum = 0;
-            for (int k = 1; k <= 6; k++) {
-                sum += k * (1.0 / 6);
-            }
-            return sum;  // 3.5
-        }
-
-        /**
-         * 模拟掷骰子多次取平均
-         */
-        public static double simulate(int trials) {
-            Random random = new Random();
-            long sum = 0;
-            for (int i = 0; i < trials; i++) {
-                sum += random.nextInt(6) + 1;
-            }
-            return (double) sum / trials;
-        }
-    }
-
-    /**
-     * 期望的线性性质
-     * E[X + Y] = E[X] + E[Y]
-     * 即使 X 和 Y 不独立也成立！
-     */
-    public static class LinearityExample {
-
-        /**
-         * 问题：计算 n 个骰子点数之和的期望
-         * 解法1：直接计算
-         * 解法2：利用线性性质
-         */
-        public static double expectedSum(int n) {
-            // 线性性质：E[X1 + X2 + ... + Xn] = E[X1] + ... + E[Xn]
-            // E[Xi] = 3.5
-            return n * 3.5;
-        }
-    }
-}
-```
+> **定位**：前面几章分析的都是「最坏情况」运行时间。本章引入两件新武器：
+> 1. **概率分析**——当输入服从某种分布（如随机排列）时，算**平均情况**运行时间；
+> 2. **随机化算法**——算法自己抛硬币做选择，对**任意输入**都给**期望**运行时间保证。
+>
+> 两者都靠**指示随机变量**这一工具把概率转成期望。本章用「雇佣问题」串起全篇，最后落到生日悖论、球与箱子、硬币序列、在线雇佣四个经典应用。
+> **前后指针**：随机化快排（第 7 章）、随机化选择 quickselect（第 9 章）都是本章思想的应用；哈希表（第 11 章）的冲突分析与生日悖论同源。
+>
+> 对照第四版书页 128–155。
 
 ---
 
-## 二、雇佣问题
+## 一、核心思想：概率分析 vs 随机化算法
 
-### 2.1 问题描述
+这是本章最易混淆的一对概念，必须先分清：
 
-**问题**：有一位秘书，需要从 n 个候选人中按随机顺序逐一面试。每次面试后，必须立即决定是否雇用该候选人。如果雇用，之后的候选人就不再考虑。如果不雇用，可以考虑后续候选人。如何做出最优决策？
+| | 概率分析（probabilistic analysis） | 随机化算法（randomized algorithm） |
+|---|---|---|
+| 谁是随机的 | **输入**（假设输入服从某分布） | **算法本身**（自己抛硬币） |
+| 分析对象 | average-case running time | expected running time |
+| 同一输入多次运行 | 结果**相同**（算法确定性） | 结果**可能不同** |
+| 坏输入 | 存在（敌人能构造） | **不存在**（随机化打乱输入相关性） |
+
+> **直觉**：概率分析是「**假设**输入随机」，随机化算法是「**强制**输入随机」（自己先随机打乱）。后者更强——连敌人都无法构造最坏输入，因为随机置换让输入顺序失去意义。
 
 ```mermaid
 flowchart TD
-    A["n 位候选人"] --> B["随机顺序面试"]
-    B --> C["面试后立即决策"]
-    C --> D["要 or 不要"]
+    A["输入"] --> PA["概率分析<br/>假设输入服从分布"]
+    A --> RA["随机化算法<br/>算法自己抛硬币"]
+    PA --> PAO["确定性算法<br/>同一输入→同一结果<br/>分析 average-case"]
+    RA --> RAO["同输入多次运行结果不同<br/>分析 expected<br/>敌人无法构造最坏输入"]
+    PAO --> KEY["共同工具：<br/>指示随机变量 + 期望线性性"]
+    RAO --> KEY
 
-    subgraph 约束
-    E["只能雇用一次"]
-    E --> F["一旦拒绝不能反悔"]
-    end
-
-    style A fill:#ff9,stroke:#333
+    classDef inp fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef pa fill:#80DEEA,stroke:#0097A7,color:#1f1f1f
+    classDef ra fill:#CE93D8,stroke:#7B1FA2,color:#1f1f1f
+    classDef key fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    class A inp
+    class PA,PAO pa
+    class RA,RAO ra
+    class KEY key
 ```
 
-### 2.2 最优策略：37% 法则
-
-**策略**：先面试前 k 位候选人（不使用任何人的信息），然后从第 k+1 位开始，选择第一个比前面所有候选人都优秀的人。
-
-```mermaid
-graph TD
-    A["面试过程"] --> B["阶段1：前 k 人"]
-    A --> C["阶段2：k+1 到 n 人"]
-
-    B --> B1["记录最佳者"]
-    B --> B2["不雇用任何人"]
-    B --> B3["获取参考信息"]
-
-    C --> C1["遇到更优秀者"]
-    C --> C2["立即雇用"]
-
-    Note["关键问题：k 取多少？"]
-```
-
-### 2.3 概率分析
-
-```java
-/**
- * 雇佣问题分析
- */
-public class HiringProblem {
-
-    /**
-     * 随机排列生成
-     * 将数组随机打乱
-     */
-    public static void shuffle(int[] arr) {
-        Random random = new Random();
-        for (int i = arr.length - 1; i > 0; i--) {
-            int j = random.nextInt(i + 1);
-            swap(arr, i, j);
-        }
-    }
-
-    private static void swap(int[] arr, int i, int j) {
-        int temp = arr[i];
-        arr[i] = arr[j];
-        arr[j] = temp;
-    }
-
-    /**
-     * 雇用成本分析
-     *
-     * @param quality 候选人质量数组（值越大越好）
-     * @param k 观察期长度
-     * @return 雇用次数
-     */
-    public static int hireCount(int[] quality, int k) {
-        int n = quality.length;
-        int hireCount = 0;
-        int best = -1;
-
-        // 阶段1：观察，不雇用
-        for (int i = 0; i < k; i++) {
-            if (quality[i] > best) {
-                best = quality[i];
-            }
-        }
-
-        // 阶段2：雇用第一个比 best 更好的人
-        for (int i = k; i < n; i++) {
-            if (quality[i] > best) {
-                best = quality[i];
-                hireCount++;
-            }
-        }
-
-        return hireCount;
-    }
-
-    /**
-     * 计算雇用 k 位置最佳候选人的概率
-     *
-     * 思路：第 i 位是最佳候选人的条件
-     * - 第 i 位是 n 个中质量最高的
-     * - 前 k 位中没有任何人比第 i 位优秀
-     *
-     * P = 1/n × Σi=k+1 to n (k / (i-1))
-     * 当 n 很大时 ≈ k/n × ln(n/k)
-     */
-    public static double probabilityBestAtPosition(int n, int k) {
-        double prob = 0.0;
-        for (int i = k + 1; i <= n; i++) {
-            // 第 i 位是最佳的概率 × 前面 k 个都不如它的概率
-            prob += (1.0 / n) * (k / (i - 1.0));
-        }
-        return prob;
-    }
-}
-```
-
-### 2.4 雇用次数的期望
-
-```mermaid
-flowchart TD
-    A["期望雇用次数"] --> B["使用指示随机变量"]
-
-    B --> C["Xi = 1 如果雇用第 i 位候选人"]
-    B --> D["E[Xi] = Pi Xi 被雇用的概率"]
-
-    C --> E["E[雇用总数] = Σi E[Xi]"]
-    E --> F["Σi=1 to n k/i 对于 i > k"]
-    F --> G["Σi=1 to n 1/i ≈ ln n"]
-    F --> H["≈ k ln n/k + 1"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-**雇用成本的期望值**：
-$$E[\text{成本}] = \sum_{i=1}^{n} P(\text{雇用第 } i \text{ 位}) \times \text{雇用成本}$$
-
-对于 $i > k$：
-$$P(\text{雇用第 } i \text{ 位}) = \frac{k}{i-1}$$
+**指示随机变量**是两者的通用工具：把「事件 A 是否发生」写成 0/1 变量 `I{A}`，则 `E[I{A}] = Pr{A}`（Lemma 5.1）。再用**期望的线性性**（`E[ΣX_i] = ΣE[X_i]`，**无需独立性**），就能把「计数」拆成一堆 0/1 变量求和——这是本章反复用的套路。
 
 ---
 
-## 三、指示随机变量
+## 二、雇佣问题（§5.1）
 
-### 3.1 指示随机变量定义
+### 2.1 问题与算法
 
-**指示随机变量**是一个随机变量，用于表示某个事件是否发生。
+要招一名助理，猎头每天送一个候选人，**面试后必须当场决定雇不雇**。规则：遇到比当前助理更好的，就**雇新的、辞旧的**。问：会雇多少次？
 
-$$X_I = \begin{cases} 1 & \text{如果事件 I 发生} \\ 0 & \text{否则} \end{cases}$$
-
-```mermaid
-graph TD
-    A["指示随机变量"] --> B["定义"]
-    A --> C["性质"]
-    A --> D["应用"]
-
-    B --> B1["X_I = 1 如果事件 I 发生"]
-    B --> B2["X_I = 0 否则"]
-
-    C --> C1["EX_I = P(I)"]
-    C --> C2["线性性质：E[ΣXi] = ΣEXi"]
-
-    D --> D1["计数问题"]
-    D --> D2["概率计算"]
-
-    style A fill:#ff9,stroke:#333
+```
+HIRE-ASSISTANT(n)                  // CLRS 第四版，1-indexed
+1  best = 0                        // 哨兵：0 号是最差的虚拟候选人
+2  for i = 1 to n
+3      interview candidate i       // 面试成本 c_i（小）
+4      if candidate i 比 best 更好
+5          best = i
+6          hire candidate i        // 雇佣成本 c_h（大）
 ```
 
-### 3.2 示例：计算逆序对
+**成本模型**：总成本 = `n·c_i + m·c_h`，其中 `m` = 雇佣次数。面试 n 次固定，所以**总成本由雇佣次数 m 决定**。最坏情况 m = n（候选人一个比一个强，如 rank = [1,2,3,…,n]）。
 
-```java
-/**
- * 使用指示随机变量分析逆序对问题
- */
-public class InversionAnalysis {
+### 2.2 随机排列假设
 
-    /**
-     * 逆序对：i < j 且 A[i] > A[j]
-     */
-    public static class InversionCount {
+要算平均雇佣次数，必须假设输入分布。本章假设：**候选人到达顺序是 rank 的均匀随机排列**（`<rank(1),…,rank(n)>` 是 `1..n` 的 n! 种排列之一，每种等概率）。
 
-        /**
-         * 指示随机变量方法
-         * X_ij = 1 如果 (i, j) 是逆序对
-         * 总逆序数 X = Σi<j X_ij
-         *
-         * 对于随机排列：
-         * P(i, j) 是逆序对 = 1/2
-         * E[X] = n(n-1)/4
-         */
-        public static double expectedInversions(int n) {
-            // EX = Σi<j EX_ij
-            // EX_ij = P(逆序) = 1/2
-            return n * (n - 1) / 4.0;
-        }
+> 这个假设是否合理，取决于现实场景。下一节（§5.3）会告诉我们：**就算输入不随机，也能主动随机化**。
 
-        /**
-         * 实际计算逆序对数量
-         */
-        public static int count(int[] arr) {
-            int count = 0;
-            for (int i = 0; i < arr.length; i++) {
-                for (int j = i + 1; j < arr.length; j++) {
-                    if (arr[i] > arr[j]) {
-                        count++;
-                    }
-                }
-            }
-            return count;
-        }
-    }
+### 2.3 一次运行的例子
 
-    /**
-     * 生日悖论分析
-     */
-    public static class BirthdayParadox {
+rank = `[5, 2, 1, 8, 4, 7, 10, 9, 3, 6]`（CLRS A₃），雇佣发生在遇到 5、8、10 时，共 **3 次**：
 
-        /**
-         * 指示随机变量：X_ij = 1 如果第 i 天和第 j 天有人生日相同
-         *
-         * P(X_ij = 1) = 1 - P(不同) = 1 - (365/364) × ... × (365-i+2)/365
-         */
-        public static double[][] calculateCollisionProbabilities(int days, int people) {
-            double[][] probs = new double[people][people];
+| i | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| rank | 5 | 2 | 1 | 8 | 4 | 7 | 10 | 9 | 3 | 6 |
+| 雇佣？ | ✅ | — | — | ✅ | — | — | ✅ | — | — | — |
 
-            for (int i = 0; i < people; i++) {
-                for (int j = i + 1; j < people; j++) {
-                    probs[i][j] = collisionProbability(i + 1, j + 1, days);
-                }
-            }
-
-            return probs;
-        }
-
-        private static double collisionProbability(int groupSize, int day1, int day2, int days) {
-            // 使用指示随机变量
-            double prob = 1.0;
-            for (int i = 0; i < groupSize - 1; i++) {
-                prob *= (double) (days - i - 1) / days;
-            }
-            return 1 - prob;
-        }
-
-        private static double collisionProbability(int person1, int person2, int days) {
-            // 简单情况：两个人的生日相同概率
-            // P(相同) = 1/365（近似）
-            return 1.0 / days;
-        }
-    }
-}
-```
-
-### 3.3 指示随机变量的优势
-
-```mermaid
-flowchart LR
-    subgraph "指示随机变量 vs 直接计算"
-    A["直接计算"] --> B["需要知道联合分布"]
-    C["指示变量"] --> D["只需要边缘概率"]
-    D --> E["线性性质简化计算"]
-    E --> F["即使不独立也成立"]
-    end
-
-    style D fill:#9f9,stroke:#333
-    style F fill:#9f9,stroke:#333
-```
+> 对比：rank = `[1,2,…,10]` 时每步都换人，雇 **10 次**；rank = `[10,9,…,1]` 时只在第一步雇人，雇 **1 次**。同样 n=10，雇佣次数从 1 到 10 都可能——所以必须用期望来刻画。
 
 ---
 
-## 四、随机算法
+## 三、指示随机变量分析雇佣（§5.2）
 
-### 4.1 随机算法概述
+### 3.1 期望雇佣次数 = ln n
 
-**随机算法**在执行过程中会做出随机选择，即使输入相同，每次运行的结果也可能不同。
+令 `X_i = I{候选人 i 被雇佣}`，则总雇佣次数 `X = X_1 + … + X_n`。
 
-```mermaid
-graph TD
-    A["随机算法分类"] --> B["随机化算法"]
-    A --> C["拉斯维加斯算法"]
-    A --> D["蒙特卡洛算法"]
+**关键观察**：候选人 i 被雇佣 ⟺ i 比 `1..i−1` 都好。在随机排列下，前 i 个候选人的相对顺序是随机的，i 恰好是这 i 个中最好的概率 = **1/i**。
 
-    B --> B1["使用随机数做出决策"]
-    B --> B2["期望性能有保证"]
-
-    C --> C1["结果总是正确"]
-    C --> C2["运行时间随机"]
-    C --> C3["例子：快速排序"]
-
-    D --> D1["运行时间确定"]
-    D --> D2["结果可能错误"]
-    D --> D3["例子：Karger 最小割"]
-
-    style A fill:#ff9,stroke:#333
+```
+E[X_i] = Pr{i 被雇佣} = 1/i
+E[X] = Σ E[X_i] = Σ_{i=1}^{n} 1/i = ln n + O(1)      // 调和级数 H_n（Lemma 5.2）
 ```
 
-### 4.2 随机化快速排序
+> **一句话直觉**：「第 i 个候选人打破当前纪录」的概率是 1/i，把 1/i 从 1 加到 n 就是调和级数 ≈ ln n。所以面试 n 人，平均只雇 **ln n** 个。
 
-```java
-import java.util.Random;
+**Lemma 5.2**：随机顺序下，HIRE-ASSISTANT 的平均雇佣成本是 `O(c_h lg n)`（最坏 `O(c_h n)`）——平均比最坏好一个指数级。
 
-/**
- * 随机化快速排序
- * 避免最坏情况，提高期望性能
- */
-public class RandomizedQuickSort {
+### 3.2 指示变量的另外两个经典应用（习题）
 
-    private static Random random = new Random();
+- **帽子问题（5.2-5）**：n 人寄存帽子，随机取回。期望「拿到自己帽子」的人数 = `Σ 1/n = 1`（第 i 人拿到自己帽子的概率是 1/n，**与排列无关**）。
+- **逆序对（5.2-6）**：随机排列的期望逆序对数 = `C(n,2)·1/2 = n(n−1)/4`（每对 (i,j) 成逆序的概率 1/2）。
 
-    /**
-     * 随机化快速排序
-     *
-     * @param arr 待排序数组
-     */
-    public static void sort(int[] arr) {
-        shuffle(arr);  // 先随机打乱
-        quickSort(arr, 0, arr.length - 1);
-    }
-
-    /**
-     * 随机打乱数组
-     * 确保任意输入排列的概率相同
-     */
-    private static void shuffle(int[] arr) {
-        for (int i = arr.length - 1; i > 0; i--) {
-            int j = random.nextInt(i + 1);
-            swap(arr, i, j);
-        }
-    }
-
-    /**
-     * 快速排序主方法
-     */
-    private static void quickSort(int[] arr, int left, int right) {
-        if (left < right) {
-            int pivotIndex = partition(arr, left, right);
-            quickSort(arr, left, pivotIndex - 1);
-            quickSort(arr, pivotIndex + 1, right);
-        }
-    }
-
-    /**
-     * 分区操作
-     * 选择 pivot，将其放到正确位置
-     */
-    private static int partition(int[] arr, int left, int right) {
-        int pivot = arr[right];  // 选择最右元素作为 pivot
-        int i = left - 1;        // 小于 pivot 的区域边界
-
-        for (int j = left; j < right; j++) {
-            if (arr[j] <= pivot) {
-                i++;
-                swap(arr, i, j);
-            }
-        }
-        swap(arr, i + 1, right);  // 将 pivot 放到正确位置
-        return i + 1;
-    }
-
-    private static void swap(int[] arr, int i, int j) {
-        int temp = arr[i];
-        arr[i] = arr[j];
-        arr[j] = temp;
-    }
-
-    /**
-     * 随机化分析版
-     */
-    public static class WithAnalysis {
-
-        private static long comparisonCount = 0;
-
-        /**
-         * 随机快速排序（带比较计数）
-         */
-        public static void sort(int[] arr) {
-            shuffle(arr);
-            quickSort(arr, 0, arr.length - 1);
-        }
-
-        private static void quickSort(int[] arr, int left, int right) {
-            if (left < right) {
-                int pivotIndex = partition(arr, left, right);
-                quickSort(arr, left, pivotIndex - 1);
-                quickSort(arr, pivotIndex + 1, right);
-            }
-        }
-
-        private static int partition(int[] arr, int left, int right) {
-            int pivot = arr[right];
-            int i = left - 1;
-
-            for (int j = left; j < right; j++) {
-                comparisonCount++;  // 计数
-                if (arr[j] <= pivot) {
-                    i++;
-                    swap(arr, i, j);
-                }
-            }
-            swap(arr, i + 1, right);
-            return i + 1;
-        }
-
-        public static long getComparisonCount() {
-            return comparisonCount;
-        }
-
-        public static void resetCount() {
-            comparisonCount = 0;
-        }
-    }
-}
-```
-
-### 4.3 随机化算法的期望分析
-
-```mermaid
-graph TD
-    A["随机化快速排序期望"] --> B["使用指示随机变量"]
-
-    B --> C["X_ij = 1 如果比较 i 和 j"]
-    B --> D["总比较次数 X = Σi<j X_ij"]
-
-    C --> E["E[X_ij] = P(i 和 j 被比较)"]
-    E --> F["分析 pivot 的选择过程"]
-    F --> G["P(i,j 比较) = 2/j-i+1"]
-
-    G --> H["E[X] = 2n ln n = On log n"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-**关键推导**：
-- 元素 $i$ 和 $j$ 只有在它们之间的元素都没被选为 pivot 时才会被比较
-- 如果 $[i, j]$ 区间内有元素被选为 pivot，则 pivot 会隔离 $i$ 和 $j$，它们不会被比较
+这两个例子都体现了指示变量的威力：**不用管变量间是否独立**，靠期望线性性直接拆。
 
 ---
 
-## 五、生日悖论
+## 四、随机化算法（§5.3）
 
-### 5.1 问题描述
+### 4.1 从「假设随机」到「主动随机」
 
-**问题**：房间里有多少人，才能使至少两个人生日相同的概率超过 50%？
+§5.2 的分析依赖「输入是随机排列」。但现实中输入可能不随机（甚至被敌人构造）。**随机化算法**的做法：运行前先把输入**随机打乱**，强制它变成随机排列——这样期望保证对**任意输入**都成立。
 
-**直觉回答**：365/2 ≈ 183 人
-**实际答案**：23 人！
-
-### 5.2 概率分析
-
-```mermaid
-flowchart TD
-    A["生日悖论分析"] --> B["计算生日都不同的概率"]
-    B --> C["逐步计算"]
-
-    C --> D["第1人：365/365 = 1"]
-    C --> E["第2人：364/365"]
-    C --> F["第3人：363/365"]
-    C --> G["..."]
-    G --> H["第 k 人：(365-k+1)/365"]
-
-    H --> I["P(k 人都不同) = Πi=0 to k-1 (365-i)/365"]
-
-    style A fill:#ff9,stroke:#333
+```
+RANDOMIZED-HIRE-ASSISTANT(n)
+1  randomly permute the list of candidates
+2  HIRE-ASSISTANT(n)
 ```
 
-### 5.3 Java 实现
+**Lemma 5.3**：期望雇佣成本 `O(c_h lg n)`——与 Lemma 5.2 同样的界，但**不再依赖输入分布假设**。区别在于：Lemma 5.2 是 average-case（对随机输入），Lemma 5.3 是 expected（对任意输入，算法自己随机）。
+
+### 4.2 随机排列：RANDOMLY-PERMUTE
+
+如何生成均匀随机排列（n! 种排列每种概率 1/n!）？朴素想法「每个位置独立选随机元素」是错的（会有重复、不均匀）。CLRS 给出原地算法：
+
+```
+RANDOMLY-PERMUTE(A, n)              // CLRS 第四版，1-indexed
+1  for i = 1 to n
+2      swap A[i] with A[RANDOM(i, n)]   // 第 i 位从 i..n 随机选一个
+```
+
+**Lemma 5.4**：RANDOMLY-PERMUTE 产生均匀随机排列。（循环不变量：第 i 轮后，`A[1..i]` 是某个 i-排列的概率 = `(n−i)!/n!`；终止时 i=n+1，得 `0!/n! = 1/n!`。）
+
+> **0-indexed**：`for i = 0 to n-1: swap a[i] with a[i + random(i, n-1)]`。等价于常见的 Fisher-Yates 反向写法（从 n−1 往前，与 `random(0,i)` 交换）。
+
+### 4.3 几个「看似随机其实不然」的反例（习题）
+
+这些习题专门破除直觉，值得一看：
+
+| 过程 | 是否均匀？ | 原因 |
+|------|-----------|------|
+| `swap A[i] with A[RANDOM(i+1, n)]`（5.3-2，避开自身） | ❌ | 排除了恒等排列，且各排列概率不等 |
+| `swap A[i] with A[RANDOM(1, n)]`（5.3-3，全程全域） | ❌ | n^n 种结果，不是 n! 的整数倍 |
+| 「每个元素落到每个位置概率 1/n」即均匀？（5.3-4） | ❌ | 不充分：循环移位也满足，但只产生 n 种排列 |
+
+> **教训**：「每个元素等概率到每个位置」**不等于**「每个排列等概率」——证明均匀性必须直接对排列计数。
+
+---
+
+## 五、四个经典应用（§5.4）
+
+### 5.1 生日悖论（§5.4.1）
+
+k 人中至少两人生日相同的概率：
+
+```
+Pr{至少一对相同} = 1 − Pr{全不同} = 1 − Π_{i=1}^{k-1} (n−i)/n     // n = 365
+```
+
+用 `1+x ≤ e^x` 放缩：`Pr{全不同} ≤ e^{−k(k−1)/2n}`。令其 ≤ 1/2，解得 **k ≥ 23**——只要 23 人，碰撞概率就过半（直觉以为是 365/2≈183）。
+
+**指示变量近似法**：令 `X_ij = I{i,j 同生日}`，`E[X] = Σ_{i<j} 1/n = C(k,2)/n = k(k−1)/(2n)`。期望「碰撞对数」=1 时 k ≈ √(2n) ≈ 27（与 23 同量级）。这是**生日攻击**的理论基础：哈希输出 n 位，找碰撞只需约 2^(n/2) 次（第 11 章哈希表、密码学）。
+
+### 5.2 球与箱子（§5.4.2）
+
+把球随机投入 b 个箱子：
+
+- **空箱数**：`E[空箱] = b·(1−1/b)^m ≈ b·e^{−m/b}`（每个箱子空的指示变量）。
+- **coupon collector**：要使**每个**箱都至少一个球，期望投球数 ≈ **b ln b**（分阶段：第 i 个新箱需 1/(1−i/b) 次期望，求和 ≈ b ln b）。
+- m = b 时，最满的箱有 Θ(lg b / lg lg b) 个球。
+
+### 5.3 硬币序列 streaks（§5.4.3）
+
+抛 n 次公平硬币，**最长连续正面**的长度是 Θ(lg n)：长度 k 的连续正面段期望约 n/2^(k+1) 个；k = c·lg n 时，c>1 几乎不出现，c<1 大量出现，故最长约 lg n。习题 5.4-8 进一步收紧到 `lg n − 2 lg lg n`。
+
+### 5.4 在线雇佣 / 秘书问题（§5.4.4）——37% 法则
+
+> ⚠️ 这与 §5.1 的雇佣问题**不同**：这里**只雇一次**，且要尽量雇到**全局最优**。
+
+**策略**：拒绝前 k 个（只记录它们的最高分 best），之后录用**第一个**分数超过 best 的人；若都没有，录用最后一个。
+
+```
+ONLINE-MAXIMUM(k, n)
+1  best-score = −∞
+2  for i = 1 to k
+3      if score(i) > best-score
+4          best-score = score(i)
+5  for i = k+1 to n
+6      if score(i) > best-score
+7          return i
+8  return n
+```
+
+**成功率**（成功 = 录到全局最佳）：
+
+```
+Pr{成功} = Σ_{i=k+1}^{n} k / (n·(i−1)) ≈ (k/n)·(ln n − ln k)
+```
+
+（最佳在位置 i 的概率 1/n，且前 i−1 名的最大值落在前 k 个的概率 k/(i−1)。）
+
+对 k 求导取最大，得 **k = n/e ≈ 0.368n**（即「37% 法则」），此时成功率 ≥ **1/e ≈ 36.8%**。
+
+> **区别于 §5.1**：§5.1 是「不断换人求累计成本低」，期望雇 ln n 次；§5.4.4 是「只录一次求命中率」，用前 37% 试水。两者都叫「hiring problem」的变体，但目标函数完全不同——别混淆。
+
+---
+
+## 六、代码实现（Java + Python）
+
+三个核心：HIRE-ASSISTANT（验证期望雇佣 ≈ ln n）、RANDOMLY-PERMUTE（验证均匀）、生日悖论碰撞概率。0-indexed。
+
+### Java
 
 ```java
-/**
- * 生日悖论分析
- */
-public class BirthdayParadox {
+import java.util.*;
 
-    /**
-     * 计算 k 个人中至少两人生日相同的概率
-     *
-     * @param k 人数
-     * @param days 一年的天数（默认 365）
-     * @return 至少一人生日相同的概率
-     */
-    public static double collisionProbability(int k, int days) {
-        // 计算生日都不同的概率
-        double probAllDifferent = 1.0;
-
-        for (int i = 0; i < k; i++) {
-            probAllDifferent *= (double) (days - i) / days;
+public class ProbabilisticAnalysis {
+    // HIRE-ASSISTANT：返回雇佣次数
+    public static int hireAssistant(int[] rank) {
+        int hires = 0, best = Integer.MIN_VALUE;
+        for (int r : rank) {
+            if (r > best) { best = r; hires++; }
         }
-
-        // 至少两人相同的概率 = 1 - 全都不同
-        return 1.0 - probAllDifferent;
+        return hires;
     }
 
-    /**
-     * 找到使碰撞概率达到 threshold 的人数
-     *
-     * @param threshold 目标概率
-     * @param days 天数
-     * @return 最少人数
-     */
-    public static int findMinimumPeople(double threshold, int days) {
-        for (int k = 1; k <= days; k++) {
-            if (collisionProbability(k, days) >= threshold) {
-                return k;
-            }
+    // RANDOMLY-PERMUTE（CLRS §5.3，0-indexed）
+    public static void randomlyPermute(int[] a, Random rnd) {
+        for (int i = 0; i < a.length; i++) {
+            int j = i + rnd.nextInt(a.length - i);   // RANDOM(i, n-1)
+            int t = a[i]; a[i] = a[j]; a[j] = t;
         }
-        return days;
     }
 
-    /**
-     * 近似计算（使用对数近似）
-     * ln(1-x) ≈ -x 当 x 很小时
-     *
-     * P(碰撞) ≈ 1 - e^(-k(k-1)/2M)
-     */
-    public static double approximateProbability(int k, int days) {
-        // 近似公式
-        double lambda = (double) k * (k - 1) / (2 * days);
-        return 1.0 - Math.exp(-lambda);
-    }
-
-    /**
-     * 生日悖论演示
-     */
-    public static void demonstrate() {
-        int days = 365;
-        double[] thresholds = {0.5, 0.7, 0.99};
-
-        System.out.println("=== 生日悖论演示 ===");
-        System.out.println("一年 " + days + " 天\n");
-
-        for (double threshold : thresholds) {
-            int minPeople = findMinimumPeople(threshold, days);
-            System.out.printf("概率超过 %.0f%% 需要 %d 人%n",
-                threshold * 100, minPeople);
-        }
-
-        System.out.println("\n=== 碰撞概率表 ===");
-        System.out.println("人数\t\t碰撞概率");
-        for (int k = 1; k <= 60; k += 5) {
-            double prob = collisionProbability(k, days);
-            System.out.printf("%d\t\t%.4f%n", k, prob);
-        }
+    // 生日悖论：k 人中至少两人生日相同的概率
+    public static double birthdayCollision(int k, int days) {
+        double allDistinct = 1.0;
+        for (int i = 0; i < k; i++) allDistinct *= (double) (days - i) / days;
+        return 1.0 - allDistinct;
     }
 
     public static void main(String[] args) {
-        demonstrate();
+        Random rnd = new Random();
 
-        // 验证：23 人时概率约为 50.7%
-        System.out.println("\n23 人时碰撞概率: " +
-            String.format("%.4f", collisionProbability(23, 365)));
+        // ① 雇佣：n=1000，跑 50000 次取平均，期望 ≈ H_1000 ≈ 7.49
+        int n = 1000, trials = 50000;
+        int[] rank = new int[n];
+        long totalHires = 0;
+        for (int t = 0; t < trials; t++) {
+            for (int i = 0; i < n; i++) rank[i] = i;
+            randomlyPermute(rank, rnd);
+            totalHires += hireAssistant(rank);
+        }
+        double avg = (double) totalHires / trials;
+        System.out.printf("雇佣次数平均: %.3f  (H_%d ≈ %.3f)%n", avg, n, harmonic(n));
+
+        // ② 生日悖论
+        System.out.printf("23 人碰撞概率: %.4f%n", birthdayCollision(23, 365));
+
+        // ③ RANDOMLY-PERMUTE 均匀性：n=5，统计 120 种排列
+        int[] a = {0,1,2,3,4};
+        Map<String, Integer> cnt = new HashMap<>();
+        int permTrials = 600_000;
+        for (int t = 0; t < permTrials; t++) {
+            randomlyPermute(a, rnd);
+            cnt.merge(Arrays.toString(a), 1, Integer::sum);
+        }
+        int distinct = cnt.size();                // 期望 120
+        int max = cnt.values().stream().mapToInt(Integer::intValue).max().getAsInt();
+        int min = cnt.values().stream().mapToInt(Integer::intValue).min().getAsInt();
+        System.out.printf("n=5 产生 %d 种排列 (期望 120)，单排列计数 min=%d max=%d (期望 %d)%n",
+                distinct, min, max, permTrials / 120);
+    }
+
+    static double harmonic(int n) {
+        double h = 0;
+        for (int i = 1; i <= n; i++) h += 1.0 / i;
+        return h;
     }
 }
 ```
 
-### 5.4 生日悖论可视化
-
-```mermaid
-graph LR
-    subgraph 碰撞概率变化
-    A["1 人: 0%"] --> B["10 人: 12%"]
-    B --> C["20 人: 41%"]
-    C --> D["23 人: 50.7%"]
-    D --> E["30 人: 70.6%"]
-    E --> F["40 人: 89%"]
-    F --> G["50 人: 97%"]
-    end
-```
-
-### 5.5 生日悖论的应用
-
-```mermaid
-graph TD
-    A["生日悖论应用"] --> B["哈希攻击"]
-    A --> C["密码学"]
-    A --> D["碰撞检测"]
-
-    B --> B1["哈希表攻击者尝试碰撞"]
-    B --> B2["只需 √M 次尝试"
-
-    C --> C1["生日攻击：伪造签名"]
-    C --> C2["需要 2的n/2次方 次尝试"
-
-    D --> D3["哈希函数强度测试"]
-    D --> D4["彩虹表攻击"
-
-    style A fill:#ff9,stroke:#333
-```
-
----
-
-## 六、球与箱子问题
-
-### 6.1 问题描述
-
-**问题**：将 m 个球随机投入 n 个箱子，求：
-- 某个箱子是空的概率
-- 某个箱子恰有一个球的概率
-- 最满的箱子有多少个球
-
-```mermaid
-graph TD
-    A["球与箱子"] --> B["m 个球"]
-    A --> C["n 个箱子"]
-    A --> D["随机投入"]
-
-    B --> E["每个球独立"]
-    B --> F["每个箱子概率相等"]
-
-    subgraph 典型问题
-    G["空箱子数量"]
-    H["球最多的箱子"]
-    I["某个箱子有 k 个球"]
-    end
-```
-
-### 6.2 分析
-
-```java
-import java.util.Random;
-
-/**
- * 球与箱子问题分析
- */
-public class BallsAndBins {
-
-    /**
-     * 使用指示随机变量计算空箱子数期望
-     *
-     * X_i = 1 如果箱子 i 是空的
-     * E[X_i] = (1 - 1/n)^m
-     * E[总空箱数] = n × (1 - 1/n)^m
-     */
-    public static double expectedEmptyBins(int m, int n) {
-        // 每个箱子空的概率
-        double probEmpty = Math.pow((double) (n - 1) / n, m);
-        return n * probEmpty;
-    }
-
-    /**
-     * 某个箱子恰有 k 个球的概率
-     * 二项分布：B(m, 1/n)
-     */
-    public static double probExactlyKBalls(int m, int n, int k) {
-        // C(m, k) × (1/n)^k × (1 - 1/n)^(m-k)
-        return binomialCoefficient(m, k) *
-               Math.pow(1.0 / n, k) *
-               Math.pow((double) (n - 1) / n, m - k);
-    }
-
-    /**
-     * 计算二项式系数 C(n, k)
-     */
-    private static long binomialCoefficient(int n, int k) {
-        if (k > n - k) k = n - k;
-        long result = 1;
-        for (int i = 0; i < k; i++) {
-            result = result * (n - i) / (i + 1);
-        }
-        return result;
-    }
-
-    /**
-     * 模拟：随机投球
-     */
-    public static int[] simulate(int m, int n) {
-        int[] bins = new int[n];
-        Random random = new Random();
-
-        for (int i = 0; i < m; i++) {
-            int bin = random.nextInt(n);
-            bins[bin]++;
-        }
-
-        return bins;
-    }
-
-    /**
-     * 最满箱子分析
-     */
-    public static int maxBallsInBin(int[] bins) {
-        int max = 0;
-        for (int count : bins) {
-            if (count > max) max = count;
-        }
-        return max;
-    }
-}
-```
-
-### 6.3 球与箱子的期望值
-
-```mermaid
-graph TD
-    A["球与箱子期望值"] --> B["空箱子数"]
-    A --> C["装球最多的箱子"]
-
-    B --> B1["E = n × (1 - 1/n)^m"]
-    B --> B2["≈ n × e^(-m/n)"]
-    B --> B3["当 m = n ln n 时，E ≈ 1"]
-
-    C --> C1["当 m = n 时，最满箱子 ≈ ln n / ln ln n"]
-    C --> C2["当 m = n ln n 时，最满箱子 ≈ ln n / ln ln n × e"]
-    C --> C3["当 m = cn 时，最满箱子 ≈ ln n / ln ln n"
-
-    style A fill:#ff9,stroke:#333
-```
-
----
-
-## 七、特征向量
-
-### 7.1 特征向量简介
-
-**特征向量**在随机算法分析中用于：
-- 分析随机游走
-- 分析马尔可夫链
-- PageRank 算法
-
-```mermaid
-graph TD
-    A["特征向量应用"] --> B["随机游走收敛"]
-    A --> C["马尔可夫链稳态"]
-    A --> D["PageRank"]
-
-    B --> B1["转移矩阵的特征值"]
-    B --> B2["收敛速度由第二大特征值决定"
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 7.2 在线雇用问题扩展
-
-```java
-/**
- * 在线雇用问题的变体分析
- */
-public class OnlineHiringVariants {
-
-    /**
-     * 变体1：预算限制
-     * 最多雇用 k 个人，选择最好的
-     */
-    public static class BudgetLimited {
-
-        /**
-         * 策略：选择前 k 个中的最大值
-         * 期望成功率 = 1/k
-         */
-        public static double successProbability(int k) {
-            // 最佳候选人随机分布在 k 个位置之一
-            return 1.0 / k;
-        }
-    }
-
-    /**
-     * 变体2：知道候选人数量的完整信息
-     * 可以精确计算最优的 k
-     */
-    public static class FullInformation {
-
-        /**
-         * 计算最优观察期 k*
-         * 使得 P(成功) 最大
-         */
-        public static int optimalK(int n) {
-            // 近似解：k* ≈ n/e
-            return (int) (n / Math.E);
-        }
-
-        /**
-         * 成功率计算
-         */
-        public static double successProbability(int n, int k) {
-            double prob = 0.0;
-            for (int i = k; i < n; i++) {
-                // 第 i 位是最佳的概率 × 前 k 位不雇用的条件
-                prob += (1.0 / n) * (k / (double) i);
-            }
-            return prob;
-        }
-    }
-
-    /**
-     * 变体3：无放回抽样
-     * 只能看到一次
-     */
-    public static class NoReplacement {
-
-        /**
-         * 采样 k 个样本，选择最好的
-         * 期望值分析
-         */
-        public static double expectedBestValue(int n, int k) {
-            // 采样 k 个值的期望最大值
-            // 对于均匀分布 [0,1]
-            return (double) k / (k + 1);
-        }
-    }
-}
-```
-
----
-
-## 八、Python 实现示例
+### Python
 
 ```python
-"""
-概率分析和随机算法 Python 实现
-"""
 import random
 import math
-from typing import List, Callable
+from collections import Counter
 
 
-class BirthdayParadox:
-    """生日悖论分析"""
-
-    @staticmethod
-    def collision_probability(k: int, days: int = 365) -> float:
-        """计算 k 人中至少两人生日相同的概率"""
-        prob_all_different = 1.0
-        for i in range(k):
-            prob_all_different *= (days - i) / days
-        return 1 - prob_all_different
-
-    @staticmethod
-    def approximate_probability(k: int, days: int = 365) -> float:
-        """使用近似公式计算"""
-        lam = k * (k - 1) / (2 * days)
-        return 1 - math.exp(-lam)
-
-    @staticmethod
-    def find_min_people(threshold: float, days: int = 365) -> int:
-        """找到使碰撞概率达到阈值的最少人数"""
-        for k in range(1, days + 1):
-            if BirthdayParadox.collision_probability(k, days) >= threshold:
-                return k
-        return days
+def hire_assistant(rank):
+    """HIRE-ASSISTANT：返回雇佣次数。"""
+    hires = 0
+    best = float('-inf')
+    for r in rank:
+        if r > best:
+            best = r
+            hires += 1
+    return hires
 
 
-class RandomizedQuickSort:
-    """随机化快速排序"""
-
-    def __init__(self):
-        self.comparison_count = 0
-
-    def sort(self, arr: List) -> List:
-        """排序并返回"""
-        self._shuffle(arr)
-        self._quick_sort(arr, 0, len(arr) - 1)
-        return arr
-
-    def _shuffle(self, arr: List) -> None:
-        """随机打乱"""
-        for i in range(len(arr) - 1, 0, -1):
-            j = random.randint(0, i)
-            arr[i], arr[j] = arr[j], arr[i]
-
-    def _quick_sort(self, arr: List, left: int, right: int) -> None:
-        if left < right:
-            pivot_idx = self._partition(arr, left, right)
-            self._quick_sort(arr, left, pivot_idx - 1)
-            self._quick_sort(arr, pivot_idx + 1, right)
-
-    def _partition(self, arr: List, left: int, right: int) -> int:
-        pivot = arr[right]
-        i = left - 1
-
-        for j in range(left, right):
-            self.comparison_count += 1
-            if arr[j] <= pivot:
-                i += 1
-                arr[i], arr[j] = arr[j], arr[i]
-
-        arr[i + 1], arr[right] = arr[right], arr[i + 1]
-        return i + 1
+def randomly_permute(a, rnd=None):
+    """RANDOMLY-PERMUTE（CLRS §5.3，0-indexed，原地）。"""
+    rnd = rnd or random
+    n = len(a)
+    for i in range(n):
+        j = rnd.randint(i, n - 1)          # RANDOM(i, n-1)
+        a[i], a[j] = a[j], a[i]
 
 
-class MonteCarloPrimalityTest:
-    """蒙特卡洛素性测试"""
-
-    def is_probable_prime(self, n: int, iterations: int = 10) -> bool:
-        """
-        Miller-Rabin 素性测试
-        返回 True 表示 n 可能是素数
-        返回 False 表示 n 一定是合数
-        """
-        if n < 2:
-            return False
-        if n == 2:
-            return True
-        if n % 2 == 0:
-            return False
-
-        # 分解 n-1 = d × 2^s
-        d = n - 1
-        s = 0
-        while d % 2 == 0:
-            d //= 2
-            s += 1
-
-        # 进行多次测试
-        for _ in range(iterations):
-            if not self._miller_rabin_test(n, d, s):
-                return False
-        return True
-
-    def _miller_rabin_test(self, n: int, d: int, s: int) -> bool:
-        a = random.randint(2, n - 2)
-        x = pow(a, d, n)
-
-        if x == 1 or x == n - 1:
-            return True
-
-        for _ in range(s - 1):
-            x = (x * x) % n
-            if x == n - 1:
-                return True
-
-        return False
+def birthday_collision(k, days=365):
+    """k 人中至少两人生日相同的概率。"""
+    all_distinct = 1.0
+    for i in range(k):
+        all_distinct *= (days - i) / days
+    return 1 - all_distinct
 
 
 if __name__ == "__main__":
-    # 生日悖论演示
-    print("=== 生日悖论演示 ===")
-    for k in [10, 20, 23, 30, 40, 50]:
-        prob = BirthdayParadox.collision_probability(k)
-        print(f"{k} 人: 碰撞概率 = {prob:.4f}")
+    # ① 雇佣：n=1000，期望 ≈ H_1000 ≈ 7.49
+    n, trials = 1000, 50000
+    total = 0
+    for _ in range(trials):
+        rank = list(range(n))
+        randomly_permute(rank)
+        total += hire_assistant(rank)
+    print(f"雇佣次数平均: {total/trials:.3f}  (H_{n} ≈ {sum(1/i for i in range(1,n+1)):.3f})")
 
-    # 随机排序测试
-    print("\n=== 随机快速排序测试 ===")
-    sorter = RandomizedQuickSort()
-    arr = [3, 1, 4, 1, 5, 9, 2, 6, 5]
-    sorted_arr = sorter.sort(arr.copy())
-    print(f"原数组: {arr}")
-    print(f"排序后: {sorted_arr}")
-    print(f"比较次数: {sorter.comparison_count}")
+    # ② 生日悖论
+    print(f"23 人碰撞概率: {birthday_collision(23):.4f}")
+
+    # ③ RANDOMLY-PERMUTE 均匀性：n=5
+    a = [0, 1, 2, 3, 4]
+    c = Counter()
+    perm_trials = 600_000
+    for _ in range(perm_trials):
+        randomly_permute(a)
+        c[tuple(a)] += 1
+    counts = list(c.values())
+    print(f"n=5 产生 {len(c)} 种排列 (期望 120)，"
+          f"min={min(counts)} max={max(counts)} (期望 {perm_trials//120})")
 ```
 
----
-
-## 九、总结与要点
-
-### 9.1 核心概念回顾
-
-```mermaid
-flowchart TD
-    A["第五章核心"] --> B["概率分析"]
-    A --> C["指示随机变量"]
-    A --> D["随机算法"]
-    A --> E["经典问题"]
-
-    B --> B1["期望运行时间"]
-    B --> B2["平均情况分析"]
-
-    C --> C1["X_I = 1 如果 I 发生"]
-    C --> C2["EX = P(I)"]
-    C --> C3["线性性质"
-
-    D --> D1["拉斯维加斯：结果正确"]
-    D --> D2["蒙特卡洛：时间确定"]
-
-    E --> E1["雇佣问题：37%法则"]
-    E --> E2["生日悖论：23人"]
-    E --> E3["球与箱子"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 9.2 关键公式速查
-
-| 问题 | 期望/概率 | 公式 |
-|-----|---------|------|
-| 雇佣成本 | 期望雇用次数 | $k \ln(n/k) + O(k)$ |
-| 生日碰撞 | k 人碰撞概率 | $1 - \prod_{i=0}^{k-1} \frac{365-i}{365}$ |
-| 逆序对 | 期望数量 | $n(n-1)/4$ |
-| 随机快排 | 期望比较次数 | $2n \ln n \approx 1.39n \log_2 n$ |
-| 空箱子 | 期望数量 | $n(1 - 1/n)^m \approx ne^{-m/n}$ |
-
-### 9.3 随机算法分类
-
-| 类型 | 确定性 | 随机性 | 示例 |
-|-----|-------|-------|------|
-| 拉斯维加斯 | 时间随机 | 结果正确 | 随机快排 |
-| 蒙特卡洛 | 时间确定 | 结果可能错误 | Miller-Rabin 测试 |
+> **验证**：Java/Python 均编译运行通过——雇佣次数平均 ≈ 7.49（与 H₁₀₀₀ ≈ 7.485 吻合）；23 人碰撞概率 ≈ 0.5072；n=5 产生全部 120 种排列且计数均匀。
 
 ---
 
-## 课后思考
+## 七、复杂度速查 + 易混点
 
-### 思考题 1
-证明：随机快速排序的期望比较次数为 $2n \ln n$。
+### 7.1 速查
 
-### 思考题 2
-在雇佣问题中，证明最优的 $k$ 值满足 $k^* \approx n/e$。
+| 量 | 结果 | 出处 |
+|------|------|------|
+| HIRE-ASSISTANT 期望雇佣次数 | `H_n = ln n + O(1)` | §5.2 Lemma 5.2 |
+| RANDOMIZED-HIRE-ASSISTANT 期望雇佣成本 | `O(c_h lg n)` | §5.3 Lemma 5.3 |
+| RANDOMLY-PERMUTE | Θ(n)，产生均匀随机排列 | §5.3 Lemma 5.4 |
+| 生日碰撞（k 人） | ≥ 1/2 当 k ≥ (1+√(1+8n ln2))/2，n=365 时 k=23 | §5.4.1 |
+| coupon collector（b 箱） | 期望 b ln b 次投球覆盖所有箱 | §5.4.2 |
+| 最长连续正面（n 次抛币） | Θ(lg n) | §5.4.3 |
+| 在线雇佣成功率（k=n/e） | ≥ 1/e ≈ 36.8% | §5.4.4 |
 
-### 思考题 3
-解释为什么生日悖论中只需要 23 人就能达到 50% 的碰撞概率。
+### 7.2 易混点
 
-### 思考题 4
-设计一个拉斯维加斯算法，在 O(n log n) 时间内找到第 k 小的元素（使用随机选择 pivot）。
+- **§5.1 雇佣问题 ≠ §5.4.4 在线雇佣**：前者不断换人求累计成本低（期望雇 ln n 次）；后者只录一次求命中率（37% 法则，成功率 1/e）。两者都涉及「雇佣」但目标不同。
+- **average-case ≠ expected**：average-case 假设输入随机（概率分析），expected 是算法自己随机（随机化算法）。随机化算法的 expected 对**任意输入**成立，average-case 只对随机输入成立。
+- **「每个元素等概率到每个位置」≠「均匀排列」**（习题 5.3-4）：循环移位满足前者但只产生 n 种排列。证明均匀必须对排列计数。
+- **期望线性性不需要独立性**：帽子问题里 X_i 之间不独立（都是同一排列的函数），但 `E[ΣX_i] = ΣE[X_i]` 仍成立——这是指示变量好用的根本原因。
+- **生日悖论的 23 不是 365/2**：碰撞看的是**配对数** C(k,2)，配对数随 k 平方增长，故只需 √n 量级。
 
 ---
 
-*本章精读笔记完成*
+## 八、LeetCode 关联 + 习题 + 思考题
+
+### 8.1 LeetCode 关联
+
+| 题目 | 难度 | 考点 | 用本章什么 |
+|------|------|------|-----------|
+| [384. 打乱数组](https://leetcode.cn/problems/shuffle-an-array/) | 中 | 随机排列 | RANDOMLY-PERMUTE / Fisher-Yates |
+| [382. 链表随机节点](https://leetcode.cn/problems/linked-list-random-node/) | 中 | 蓄水池抽样 | 随机化的延伸（相关但非本章） |
+| [528. 按权重随机选择](https://leetcode.cn/problems/random-pick-with-weight/) | 中 | 前缀和 + 二分 + 随机 | RANDOM 的应用 |
+
+> 本章偏理论，LC 直接对应的是 **384 打乱数组**（即 RANDOMLY-PERMUTE）。生日悖论的思想在哈希冲突（第 11 章）和密码学（生日攻击）中反复出现。
+
+### 8.2 习题快问快答（第四版编号）
+
+- **5.1-2**　用 `RANDOM(0,1)` 实现 `RANDOM(a,b)`：把 b−a+1 个结果用二进制表示，每次取 ⌈lg(b−a+1)⌉ 个随机位，落 in range 才接受（拒绝采样），期望 Θ(lg(b−a+))。
+- **5.1-3**　用偏置 `BIASED-RANDOM`（输出 1 概率 p）造无偏硬币：**抛两次**，(0,1)→输出 0，(1,0)→输出 1，(0,0)/(1,1) 重抛。两次不同的概率 p(1−p) 两种对称，期望 1/(p(1−p)) 次成对抛掷。
+- **5.2-1**　恰好雇 1 次：最佳候选人在位置 1，概率 1/n。恰好雇 n 次：rank = [1,2,…,n]，概率 1/n!。
+- **5.2-2**　恰好雇 2 次：最佳在位置 j（j≥2）且位置 1..j−1 的最大值恰在位置 1。概率和 = Σ_{j=2}^{n} (1/n)·(1/(j−1))。
+- **5.2-5**　帽子问题：期望 1 人拿对自己的帽子。
+- **5.2-6**　随机排列期望逆序对 = n(n−1)/4。
+- **5.3-2/5.3-3/5.3-4**　见 §4.3 反例表——都不产生均匀排列。
+
+### 8.3 思考题要点
+
+- **5-1 概率计数**：Morris 计数器——b 位计数器存的不是真实值 i 而是 `n_i`（如 `n_i = 2^i`），INCREMENT 以 `1/(n_{i+1}−n_i)` 概率才加 1。期望表示的真实值**恰好**等于真实增量 n（用指示变量证明），用 1 字节就能计到几百。这是「用随机换空间」的经典。
+- **5-2 搜索无序数组**：对比三种搜 x 的算法——RANDOM-SEARCH（每次随机选下标）、DETERMINISTIC-SEARCH（顺序扫）、SCRAMBLE-SEARCH（先随机打乱再顺序扫）。只有一个 x 时：随机搜期望 n 次、确定性最坏 n 次/平均 (n+1)/2、scramble 与确定性平均相同。x 不存在时 RANDOM-SEARCH 期望 Θ(n lg n) 才能查遍所有下标（coupon collector）。结论：实际用确定性线性搜。
+
+### 章末注记
+
+概率分析与随机化算法的思想贯穿全书：随机化快排（第 7 章）、随机化选择（第 9 章）、哈希（第 11 章）、最小割（Karger 算法）都建立在此之上。Morris 概率计数（1978）是流式算法的先驱；秘书问题的 1/e 停止法则（1/e-law of best choice）是**最优停止理论**的经典结果，可追溯到 Cayley（1875）与 Gardner 的科普。

@@ -1,1228 +1,715 @@
 # 第六章：堆排序
 
-## 一、二叉堆数据结构
+> **本章定位**：插入排序「原地」但 O(n²)；归并排序 O(n log n) 但要 O(n) 额外空间。**堆排序把两者的优点合二为一**——既 O(n log n)，又原地排序（只用 O(1) 额外空间），且**最坏情况也是 O(n log n)**（不像快排会退化到 O(n²)）。
+>
+> 更重要的是，堆排序引入了一个新的算法设计思路：**用一个数据结构（堆）来管理信息**。堆不止用于排序，还能高效实现**优先队列**，并在后续许多章节（Dijkstra、Prim 等）中反复出现。
 
-### 1.1 堆的定义
+> ⚠️ **术语澄清**：「堆」这个词最早就是在堆排序里提出的。后来 Java/Python 把「垃圾回收的存储区」也叫 heap。**本书的「堆」一律指数据结构，不是垃圾回收存储**。
 
-**二叉堆**是一棵**完全二叉树**，可以用数组高效存储。它满足**堆性质**：
-- **最大堆**：每个节点的值 ≥ 其子节点的值
-- **最小堆**：每个节点的值 ≤ 其子节点的值
-
-```mermaid
-graph TD
-    A["二叉堆特性"] --> B["完全二叉树结构"]
-    A --> C["堆性质"]
-    A --> D["数组存储"]
-
-    B --> B1["除了最后一层外各层完全填充"]
-    B --> B2["最后一层从左到右填充"]
-
-    C --> C1["最大堆：父 ≥ 子"]
-    C --> C2["最小堆：父 ≤ 子"]
-
-    D --> D1["parent i = i/2"]
-    D --> D2["left i = 2i"]
-    D --> D3["right i = 2i + 1"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 1.2 堆的数组表示
-
-```mermaid
-graph LR
-    subgraph 堆结构
-    A["100"] --> B["19"]
-    A --> C["36"]
-    B --> D["17"]
-    B --> E["12"]
-    C --> F["25"]
-    C --> G["28"]
-    end
-
-    subgraph 数组表示
-    H["索引: 1 2 3 4 5 6 7"]
-    I["值: 100 19 36 17 12 25 28"]
-    end
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 1.3 堆的基本操作
-
-```java
-/**
- * 最大堆实现
- */
-public class MaxHeap {
-    private int[] heap;
-    private int size;
-    private int capacity;
-
-    public MaxHeap(int capacity) {
-        this.capacity = capacity;
-        this.heap = new int[capacity + 1];  // 1-indexed
-        this.size = 0;
-    }
-
-    /**
-     * 获取父节点索引
-     */
-    private int parent(int i) {
-        return i / 2;
-    }
-
-    /**
-     * 获取左子节点索引
-     */
-    private int left(int i) {
-        return 2 * i;
-    }
-
-    /**
-     * 获取右子节点索引
-     */
-    private int right(int i) {
-        return 2 * i + 1;
-    }
-
-    /**
-     * 检查索引是否有效
-     */
-    private boolean isValid(int i) {
-        return i >= 1 && i <= size;
-    }
-
-    /**
-     * 交换两个元素
-     */
-    private void swap(int i, int j) {
-        int temp = heap[i];
-        heap[i] = heap[j];
-        heap[j] = temp;
-    }
-}
-```
+> 📌 **索引约定**：CLRS 伪代码用 **1-indexed**（`PARENT(i)=⌊i/2⌋, LEFT(i)=2i, RIGHT(i)=2i+1`）；本章 Java/Python 代码用实战惯用的 **0-indexed**（`left=2i+1, right=2i+2, parent=(i-1)/2`）。
 
 ---
 
-## 二、堆的核心操作
+## 一、二叉堆：一种用数组存的完全二叉树
 
-### 2.1 Max-Heapify（上浮/下沉）
+### 1.1 定义
 
-**Max-Heapify** 是维护堆性质的核心操作：给定一个节点 i，确保以 i 为根的子树满足堆性质。
+**（二叉）堆**是一个数组，可以看作一棵**近似完全二叉树**：
+- 树是**完全二叉树**——除最后一层外每层都填满，最后一层**从左到右**依次填充；
+- 树的第 i 个节点就对应数组下标 i（1-indexed）。
 
-```mermaid
-flowchart TD
-    A["Max-Heapify i"] --> B["找到 i, left, right 中最大的"]
-    B --> C{"最大的是 i?"}
-    C -->|是| D["无需操作，返回"]
-    C -->|否| E["交换 i 和最大子节点"]
-    E --> F["对交换后的子节点递归 Max-Heapify"]
+数组带一个属性 `A.heap-size`，表示当前堆里有效元素的个数（`0 ≤ heap-size ≤ n`）。`heap-size = 0` 即堆空。
 
-    style A fill:#ff9,stroke:#333
+**索引计算（1-indexed，可用位运算 O(1) 实现）：**
+
+```
+PARENT(i)   return ⌊i/2⌋        // i >> 1
+LEFT(i)     return 2i           // i << 1
+RIGHT(i)    return 2i + 1       // (i << 1) + 1
 ```
 
-### 2.2 Max-Heapify 实现
+### 1.2 堆性质与高度
 
-```java
-/**
-     * 最大堆化操作
-     * 时间复杂度：O(log n)
-     *
-     * @param i 需要堆化的节点索引
-     */
-    public void maxHeapify(int i) {
-        int largest = i;  // 假设当前节点最大
-        int l = left(i);
-        int r = right(i);
+两种堆，都满足各自的**堆性质**：
 
-        // 比较左子节点
-        if (l <= size && heap[l] > heap[largest]) {
-            largest = l;
-        }
+| 类型 | 堆性质 | 最大/小元素在哪 |
+|------|--------|----------------|
+| **最大堆** max-heap | 除根外每个节点 i：`A[PARENT(i)] ≥ A[i]`（父 ≥ 子） | 根节点 |
+| **最小堆** min-heap | 除根外每个节点 i：`A[PARENT(i)] ≤ A[i]`（父 ≤ 子） | 根节点 |
 
-        // 比较右子节点
-        if (r <= size && heap[r] > heap[largest]) {
-            largest = r;
-        }
+- 堆排序用**最大堆**；优先队列常用**最小堆**。
+- **节点的高度** = 该节点到叶子最长简单路径的边数；**堆的高度** = 根的高度。
+- n 个元素的堆，高度 = **⌊lg n⌋**（由完全二叉树性质决定，习题 6.1-2）。
+- 后续所有基本操作的耗时都正比于树高，故都是 **O(lg n)**。
 
-        // 如果最大节点不是当前节点，交换并递归
-        if (largest != i) {
-            swap(i, largest);
-            maxHeapify(largest);  // 递归堆化交换后的节点
-        }
-    }
+> 💡 **快问快答（来自习题）**：
+> - 高度为 h 的堆，元素个数在 **[2^h, 2^(h+1) − 1]** 之间（习题 6.1-1）——「高度 ⌊lg n⌋」正是用这上下界夹出来的。
+> - 元素互异时，**最小元素必在某个叶子上**（习题 6.1-4：若它是非叶，它比自己的孩子还小，违反最大堆性质）。
+> - 一个**已升序数组本身就是最小堆**（习题 6.1-6：父下标小 ⇒ 父值小）。注意堆有序 ≠ 数组有序，堆是「比排序弱得多」的偏序。
 
-    /**
-     * 非递归版 Max-Heapify
-     * 避免栈溢出
-     */
-    public void maxHeapifyIterative(int i) {
-        while (true) {
-            int largest = i;
-            int l = left(i);
-            int r = right(i);
+### 图 A：最大堆的「树 ↔ 数组」对照
 
-            if (l <= size && heap[l] > heap[largest]) {
-                largest = l;
-            }
-            if (r <= size && heap[r] > heap[largest]) {
-                largest = r;
-            }
-
-            if (largest == i) {
-                break;  // 已经是最大堆
-            }
-
-            swap(i, largest);
-            i = largest;  // 继续下沉
-        }
-    }
-```
-
-### 2.3 Build-Max-Heap（建堆）
-
-**Build-Max-Heap** 将任意数组转换为最大堆。
+一棵 10 个节点的最大堆。树中圆圈里的数字是**值**，圆圈外的数字是**数组下标**：
 
 ```mermaid
 graph TD
-    subgraph 建堆过程
-    A["原数组"] --> B["从最后一个非叶子节点开始"]
-    B --> C["n/2 downto 1"]
-    C --> D["对每个节点调用 Max-Heapify"]
-    end
+    n1["1<br/>16"] --> n2["2<br/>14"]
+    n1 --> n3["3<br/>10"]
+    n2 --> n4["4<br/>8"]
+    n2 --> n5["5<br/>7"]
+    n3 --> n6["6<br/>9"]
+    n3 --> n7["7<br/>3"]
+    n4 --> n8["8<br/>2"]
+    n4 --> n9["9<br/>4"]
+    n5 --> n10["10<br/>1"]
 
-    subgraph 时间复杂度分析
-    E["叶子节点：O(1)"]
-    F["倒数第二层：O(log 2)"]
-    G["倒数第三层：O(log 3)"]
-    H["根节点：O(log n)"]
-    I["总时间：O(n)"]
-    end
-
-    style I fill:#9f9,stroke:#333
+    classDef rt fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef nd fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    class n1 rt
+    class n2,n3,n4,n5,n6,n7,n8,n9,n10 nd
 ```
 
-### 2.4 建堆实现
+对应的数组（树的高度为 3；下标 4 的节点高度为 1）：
 
-```java
-    /**
-     * 建堆操作
-     * 时间复杂度：O(n)
-     *
-     * @param arr 输入数组
-     * @return 建好的最大堆
-     */
-    public static MaxHeap buildMaxHeap(int[] arr) {
-        MaxHeap heap = new MaxHeap(arr.length);
-        System.arraycopy(arr, 0, heap.heap, 1, arr.length);
-        heap.size = arr.length;
+| 下标 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|------|---|---|---|---|---|---|---|---|---|----|
+| 值   | 16 | 14 | 10 | 8 | 7 | 9 | 3 | 2 | 4 | 1 |
 
-        // 从最后一个非叶子节点开始
-        // 最后一个非叶子节点是 n/2
-        for (int i = heap.size / 2; i >= 1; i--) {
-            heap.maxHeapify(i);
-        }
-
-        return heap;
-    }
-
-    /**
-     * 原地建堆（修改原数组）
-     */
-    public static void buildMaxHeapInPlace(int[] arr) {
-        int n = arr.length;
-
-        // 将数组转为 1-indexed 风格处理
-        for (int i = n / 2 - 1; i >= 0; i--) {
-            heapifyInPlace(arr, n, i);
-        }
-    }
-
-    /**
-     * 原地堆化（适用于 0-indexed 数组）
-     */
-    private static void heapifyInPlace(int[] arr, int n, int i) {
-        int largest = i;
-        int left = 2 * i + 1;      // 0-indexed 的左子节点
-        int right = 2 * i + 2;     // 0-indexed 的右子节点
-
-        if (left < n && arr[left] > arr[largest]) {
-            largest = left;
-        }
-        if (right < n && arr[right] > arr[largest]) {
-            largest = right;
-        }
-
-        if (largest != i) {
-            swapInPlace(arr, i, largest);
-            heapifyInPlace(arr, n, largest);
-        }
-    }
-
-    private static void swapInPlace(int[] arr, int i, int j) {
-        int temp = arr[i];
-        arr[i] = arr[j];
-        arr[j] = temp;
-    }
-```
+> 💡 **关键直觉**：父节点下标 `⌊i/2⌋`、子节点下标 `2i / 2i+1`——这套算术让「完全二叉树的父子关系」直接编码进数组下标，**不需要任何指针**。这就是堆能用数组高效存储的根本原因。
 
 ---
 
-## 三、堆排序算法
+## 二、维护堆性质：MAX-HEAPIFY（下沉）
 
-### 3.1 堆排序思想
+### 2.1 直觉
 
-**堆排序**利用最大堆的性质：
-1. 构建最大堆
-2. 每次将堆顶（最大元素）与堆尾交换
-3. 堆大小减一，对堆顶进行 Max-Heapify
-4. 重复直到排序完成
+`MAX-HEAPIFY(A, i)` 的**前提**：节点 i 的左右子树都已经是最大堆，只有 `A[i]` **可能**比自己的子节点小。
+
+做法：让 `A[i]` 的值**「下沉（float down）」**——在它和两个子节点中找出最大的；
+- 若最大者就是 `A[i]`，子树已是最大堆，结束；
+- 否则把 `A[i]` 和最大子节点交换。交换后，**被换下去的那个节点**值变小了，可能又违反堆性质 → **对它递归调用 MAX-HEAPIFY**。
+
+> 🔑 **易混点**：MAX-HEAPIFY 是**下沉（下滤 / sift-down / percolate-down）**操作。「上浮」是 INCREASE-KEY 和 INSERT 才用的（见第五节），不要混为一谈。
+
+### 2.2 伪代码（1-indexed）
+
+```
+MAX-HEAPIFY(A, i)
+1  l = LEFT(i)
+2  r = RIGHT(i)
+3  if l ≤ A.heap-size and A[l] > A[i]
+4      largest = l
+5  else largest = i
+6  if r ≤ A.heap-size and A[r] > A[largest]
+7      largest = r
+8  if largest ≠ i
+9      exchange A[i] with A[largest]
+10     MAX-HEAPIFY(A, largest)     // 对换下去的子节点递归
+```
+
+### 图 B：MAX-HEAPIFY(A, 2) 的下沉过程
+
+输入数组 `A = [16, 4, 10, 14, 7, 9, 3, 2, 8, 1]`（heap-size=10），调用 `MAX-HEAPIFY(A, 2)`。红色为当前违反 / 正在下沉的节点：
+
+```mermaid
+graph TD
+    subgraph S1["（a）下沉前：A[2]=4 比子节点 14、7 都小，违反堆性质"]
+      a1["1<br/>16"] --> a2["2<br/>4"]
+      a1 --> a3["3<br/>10"]
+      a2 --> a4["4<br/>14"]
+      a2 --> a5["5<br/>7"]
+      a3 --> a6["6<br/>9"]
+      a3 --> a7["7<br/>3"]
+      a4 --> a8["8<br/>2"]
+      a4 --> a9["9<br/>8"]
+      a5 --> a10["10<br/>1"]
+    end
+    subgraph S2["（c）下沉后：值 4 沿 2→4→9 一路下滤，恢复最大堆"]
+      b1["1<br/>16"] --> b2["2<br/>14"]
+      b1 --> b3["3<br/>10"]
+      b2 --> b4["4<br/>8"]
+      b2 --> b5["5<br/>7"]
+      b3 --> b6["6<br/>9"]
+      b3 --> b7["7<br/>3"]
+      b4 --> b8["8<br/>2"]
+      b4 --> b9["9<br/>4"]
+      b5 --> b10["10<br/>1"]
+    end
+
+    classDef rt fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef nd fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    classDef hl fill:#EF9A9A,stroke:#C62828,color:#1f1f1f
+    class a1,b1 rt
+    class a2,a4,a9,b2,b4,b9 hl
+    class a3,a5,a6,a7,a8,a10,b3,b5,b6,b7,b8,b10 nd
+
+    style S1 fill:#E3F2FD,stroke:#1976D2,color:#1f1f1f
+    style S2 fill:#E8F5E9,stroke:#388E3C,color:#1f1f1f
+```
+
+**中间一步（b）**：先交换 `A[2]↔A[4]`（值 4 与 14 交换）→ 此时**节点 4（值 4）**又比两个子节点的值 2、8 小，递归 `MAX-HEAPIFY(A, 4)`；再交换 `A[4]↔A[9]`（值 4 与 8 交换）→ 节点 9 是叶子，结束。最终得到图 (c) 的标准最大堆。
+
+### 2.3 复杂度
+
+- 每次递归下降一层，树高 ⌊lg n⌋，故 **O(lg n)**。
+- 严格递推：根的一棵子树规模最多 `2n/3`（习题 6.2-2），故 `T(n) ≤ T(2n/3) + O(1)`，由主定理 case 2 得 **T(n) = O(lg n)**。
+- 等价地，对高度为 h 的节点，代价 **O(h)**。
+- 最坏情况确实是 **Ω(lg n)**（习题 6.2-7），所以是 Θ(lg n)。
+- 两个边界情形（习题 6.2-4 / 6.2-5）：`A[i]` 已不小于孩子时调用 → 直接返回；`i > heap-size/2` 时调用 → i 本就是叶子，无效果。
+- 第 10 行的递归是**尾递归**，容易改成迭代（习题 6.2-6）——第六节的 Java 代码就是迭代版。
+
+---
+
+## 三、建堆：BUILD-MAX-HEAP（线性时间）
+
+### 3.1 思路：自底向上对非叶子节点逐个下沉
+
+叶子节点天然是「1 元素的最大堆」。习题 6.1-8 指出：**下标 ⌊n/2⌋+1 … n 的节点全是叶子**。所以只需对**非叶子节点**（下标 ⌊n/2⌋ … 1）**从后往前**逐个调用 MAX-HEAPIFY。
+
+```
+BUILD-MAX-HEAP(A, n)
+1  A.heap-size = n
+2  for i = ⌊n/2⌋ downto 1
+3      MAX-HEAPIFY(A, i)
+```
+
+**循环不变量**（证明正确性）：在第 2 行 for 循环每轮开始时，节点 `i+1, i+2, …, n` 都各自是某个最大堆的根。
+- **初始化**（i=⌊n/2⌋）：⌊n/2⌋+1…n 都是叶子，天然是最大堆根。
+- **保持**：节点 i 的子节点编号都大于 i，由不变量它们都是最大堆根——这恰好满足 MAX-HEAPIFY 的前提；调用后 i 也成为最大堆根，且不破坏后面的节点。
+- **终止**（i=0）：节点 1…n 都最大堆根，特别地根节点 1 是，建堆完成。
+
+**为什么倒序（从 ⌊n/2⌋ 到 1）？** 这样能保证「调用 MAX-HEAPIFY(A, i) 时，i 的两棵子树都已经是最大堆」——正序就不成立了（习题 6.3-3）。
+
+### 图 C：建堆流程 + 数组 trace
+
+```mermaid
+flowchart LR
+    A["输入数组<br/>（任意顺序）"] --> B["对 i = ⌊n/2⌋ … 1<br/>依次 MAX-HEAPIFY(i)"]
+    B --> C["最大堆"]
+
+    style A fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    style B fill:#80DEEA,stroke:#0097A7,color:#1f1f1f
+    style C fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+```
+
+对 `A = [4, 1, 3, 2, 16, 9, 10, 14, 8, 7]`（n=10，⌊n/2⌋=5）建堆的完整轨迹。每行**加粗**的格子 = 本轮 heapify 的根节点 i（已就位为子树最大值），括号内是本轮值下滤经过的下标路径：
+
+| 步骤 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|------|---|---|---|---|---|---|---|---|---|----|
+| 初始（输入） | 4 | 1 | 3 | 2 | 16 | 9 | 10 | 14 | 8 | 7 |
+| heapify(5)（不移动） | 4 | 1 | 3 | 2 | **16** | 9 | 10 | 14 | 8 | 7 |
+| heapify(4)（A[4]→A[8]） | 4 | 1 | 3 | **14** | 16 | 9 | 10 | 2 | 8 | 7 |
+| heapify(3)（A[3]→A[7]） | 4 | 1 | **10** | 14 | 16 | 9 | 3 | 2 | 8 | 7 |
+| heapify(2)（A[2]→A[5]→A[10]） | 4 | **16** | 10 | 14 | 7 | 9 | 3 | 2 | 8 | 1 |
+| heapify(1)（A[1]→A[2]→A[4]→A[9]） | **16** | 14 | 10 | 8 | 7 | 9 | 3 | 2 | 4 | 1 |
+
+最终得到第一节那个标准最大堆 `[16,14,10,8,7,9,3,2,4,1]`。
+
+### 3.2 复杂度：为什么是 O(n) 而不是 O(n log n)？
+
+粗看：n 次 MAX-HEAPIFY × 每次 O(lg n) = O(n log n)。这个上界**对但不紧**。
+
+**关键观察**：MAX-HEAPIFY 的代价正比于**节点高度 h**，而**大多数节点高度很小**（叶子高度 0，占一半）。精确按高度求和（高度为 h 的节点数 ≤ ⌈n/2^(h+1)⌉，见习题 6.3-4）：
+
+**按高度求和的证明表**：
+
+| 高度 h | 该高度的节点数 ≤ | 每节点代价 | 该高度总代价 ≤ |
+|--------|------------------|-----------|----------------|
+| 0（叶子） | ⌈n/2⌉ | 0 | 0 |
+| 1 | ⌈n/4⌉ | c·1 | n/4 · c |
+| 2 | ⌈n/8⌉ | c·2 | 2n/8 · c |
+| … | … | … | … |
+| h | ⌈n / 2^(h+1)⌉ | c·h | c · h · n / 2^(h+1) |
+| **求和** | | | **见下** |
+
+总代价上界（放缩 `⌈n/2^(h+1)⌉ ≤ n/2^h` 成立是因为 `n/2^(h+1) ≥ 1/2`（习题 6.3-2），且 `x ≥ 1/2` 时 `⌈x⌉ ≤ 2x`）：
+
+$$
+\sum_{h=0}^{\lfloor \lg n \rfloor} c \cdot h \cdot \frac{n}{2^h} \;\le\; cn \sum_{h=0}^{\infty} \frac{h}{2^h} = cn \cdot 2 = O(n)
+$$
+
+> 最后一步用了恒等式 $\sum_{h \ge 0} h/2^h = 2$（即 $\sum h x^h = x/(1-x)^2$ 在 $x=1/2$ 处取值）。
+>
+> **结论：建最大堆只需线性时间 O(n)。**（建最小堆同理，把 MAX-HEAPIFY 换成 MIN-HEAPIFY。）
+
+---
+
+## 四、堆排序：HEAPSORT
+
+### 4.1 算法
+
+```
+HEAPSORT(A, n)
+1  BUILD-MAX-HEAP(A, n)           // 先建最大堆，O(n)
+2  for i = n downto 2
+3      exchange A[1] with A[i]    // 把当前最大值（根）换到末尾归位
+4      A.heap-size = A.heap-size − 1  // 缩小堆，把 A[i] 排除在外
+5      MAX-HEAPIFY(A, 1)          // 对新根下沉，恢复最大堆
+```
+
+**直觉**：最大堆的根永远是当前最大值。每轮把它换到数组末尾、缩小堆、再下沉堆顶——末尾就长出一个**升序的已排序区**，堆区逐渐缩小。
+
+**循环不变量**（习题 6.4-2）：每轮开始时，`A[1..i]` 是含 i 个最小元素的最大堆，`A[i+1..n]` 是已排序的 n−i 个最大元素。
+
+### 图 D：堆排序流程
 
 ```mermaid
 flowchart TD
-    A["堆排序过程"] --> B["建堆：O(n)"]
-    A --> C["交换堆顶与堆尾"]
-    A --> D["堆大小减一"]
-    A --> E["堆化堆顶：O(log n)"]
-    A --> F["重复 n-1 次"]
+    A["最大堆（根 = 当前最大值）<br/>[16 14 10 8 7 9 3 2 4 1]"] -->|"① 交换 根 ↔ 末尾"| B["[1 … …] ｜ [16]"]
+    B -->|"② heap-size−1，MAX-HEAPIFY(根)"| C["堆区重新成最大堆 ｜ 有序尾 [16]"]
+    C -->|"重复 n−1 次"| D["全部有序（升序）<br/>[1 2 3 4 7 8 9 10 14 16]"]
 
-    subgraph 排序过程
-    G["原始数组"] --> H["建堆后"]
-    H --> I["堆顶...较小元素"]
-    I --> J["排序后数组"]
-    end
-
-    style A fill:#ff9,stroke:#333
+    style A fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    style B fill:#80DEEA,stroke:#0097A7,color:#1f1f1f
+    style C fill:#80DEEA,stroke:#0097A7,color:#1f1f1f
+    style D fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
 ```
 
-### 3.2 堆排序实现
+完整轨迹。**加粗** = 已排序区，可见它从右向左逐渐占满整个数组：
+
+| 步骤 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|------|---|---|---|---|---|---|---|---|---|----|
+| 初态（建堆后） | 16 | 14 | 10 | 8 | 7 | 9 | 3 | 2 | 4 | 1 |
+| i=10 后 | 14 | 8 | 10 | 4 | 7 | 9 | 3 | 2 | 1 | **16** |
+| i=9 后 | 10 | 8 | 9 | 4 | 7 | 1 | 3 | 2 | **14** | **16** |
+| i=8 后 | 9 | 8 | 3 | 4 | 7 | 1 | 2 | **10** | **14** | **16** |
+| … | … | … | … | … | … | … | … | … | … | … |
+| 终态 | **1** | **2** | **3** | **4** | **7** | **8** | **9** | **10** | **14** | **16** |
+
+（i=7 … 2 每轮同理：交换堆顶与堆尾、堆缩小一格、对新根下沉，最大值依次归位到已排序区前端。）
+
+### 4.2 复杂度
+
+- BUILD-MAX-HEAP：**O(n)**。
+- n−1 次 MAX-HEAPIFY，每次 **O(lg n)**：**O(n log n)**。
+- 合计 **O(n log n)**，原地（**O(1)** 额外空间）。
+- 下界同样成立：最坏 **Ω(n lg n)**（习题 6.4-4）；甚至**元素互异时，最好情况也是 Ω(n lg n)**（习题 6.4-5，带星号）——堆排序**没有「好情况」**，任何输入都是 Θ(n lg n)（6.4-3：已升序 / 已降序输入也不例外）。这点和插入排序（近乎有序时 O(n)）、快排（均衡划分时更快）都不同。
+
+> 🏆 **渐进最优**：第 8 章会证明任何**基于比较**的排序至少需要 Ω(n log n) 次比较。所以堆排序在比较排序中**渐进最优**。不过实际工程中，常数因子更小的快排通常更快。
+
+---
+
+## 五、优先队列：堆最重要的应用
+
+**优先队列**维护一个带 key 的元素集合，支持高效取最值。最大优先队列（基于最大堆）支持：
+
+| 操作 | 含义 | 复杂度 |
+|------|------|--------|
+| `MAXIMUM(S)` | 返回最大 key 的元素 | **O(1)** |
+| `EXTRACT-MAX(S)` | 删除并返回最大 key 的元素 | **O(lg n)** |
+| `INCREASE-KEY(S, x, k)` | 把元素 x 的 key 增大到 k（只能增） | **O(lg n)** |
+| `INSERT(S, x, k)` | 插入 key 为 k 的元素 | **O(lg n)** |
+
+> 最小优先队列把 MAX 换成 MIN、INCREASE-KEY 换成 DECREASE-KEY，用最小堆实现。
+>
+> 典型应用：最大优先队列 → **多用户共享计算机的作业调度**（EXTRACT-MAX 取最高优先级作业）；最小优先队列 → **事件驱动模拟**（key 为事件发生时刻，EXTRACT-MIN 取下一事件）、**Dijkstra / Prim**（第 21、22 章，靠 DECREASE-KEY 支撑）。
+
+### 5.1 对象、卫星数据与「对象 ↔ 下标」映射（第四版扩写重点）
+
+前面各节把数组元素当 key 本身排序；实现优先队列时，堆里存的其实是**应用对象**，key 只是它的一个属性，其余随对象一起移动的信息叫**卫星数据（satellite data）**。
+
+麻烦在于：交换会不断改变对象在数组里的下标，而 INCREASE-KEY / DELETE 又需要「由对象找到它在堆里的位置」。因此必须维护**对象 ↔ 数组下标的双向映射**，两种方案：
+
+- **句柄（handle）**：对象里藏一个对外界不透明（opaque）的下标字段，每次交换同步更新，只暴露给优先队列内部——不破坏抽象屏障；
+- **队列内部存一张映射表**（如哈希表，第 11 章）：应用对象无需改动，期望 O(1) 每次查询，但最坏 O(n)。
+
+所以第四版给优先队列操作的复杂度都带前提：**O(lg n) + 映射开销**（句柄方案下每次访问 O(1)）。
+
+### 5.2 伪代码（1-indexed，第四版：以对象 x 为参数）
+
+```
+MAX-HEAP-MAXIMUM(A)
+1  if A.heap-size < 1
+2      error "heap underflow"
+3  return A[1]
+
+MAX-HEAP-EXTRACT-MAX(A)        // 和 HEAPSORT 循环体一致
+1  max = MAX-HEAP-MAXIMUM(A)
+2  A[1] = A[A.heap-size]
+3  A.heap-size = A.heap-size − 1
+4  MAX-HEAPIFY(A, 1)           // 下沉堆顶（比较的是元素的 key 属性）
+5  return max
+
+MAX-HEAP-INCREASE-KEY(A, x, k)   // x 为对象，不是下标
+1  if k < x.key
+2      error "new key is smaller than current key"
+3  x.key = k
+4  找到对象 x 在数组中的下标 i      // 靠句柄 / 映射表
+5  while i > 1 and A[PARENT(i)].key < A[i].key
+6      exchange A[i] with A[PARENT(i)]   // 上浮；同步更新对象→下标映射
+7      i = PARENT(i)
+
+MAX-HEAP-INSERT(A, x, n)
+1  if A.heap-size == n  error "heap overflow"
+2  A.heap-size = A.heap-size + 1
+3  k = x.key
+4  x.key = −∞                    // 先放 −∞ 占位，保证下一步的前提成立
+5  A[A.heap-size] = x            // 并登记映射 x → heap-size
+6  MAX-HEAP-INCREASE-KEY(A, x, k)  // 上浮到正确位置
+```
+
+> 📖 **第四版 vs 第三版**：第三版按下标操作（`HEAP-INCREASE-KEY(A, i, key)`），第四版改为**按对象 x 操作**并显式维护下标映射。若元素就是 key 本身（没有卫星数据，如排序场景），对象版可退化为下标版——第六节 Java 代码正是下标版。
+
+> 🔑 EXTRACT-MAX 用**下沉**（根变小，往下滤）；INCREASE-KEY / INSERT 用**上浮**（节点变大，往上滤）——这是堆的两类基本修复方向，务必区分。INSERT 先置 −∞ 再上浮，是为了满足 INCREASE-KEY「新 key ≥ 旧 key」的前提（习题 6.5-5）。
+
+### 5.3 MAX-HEAP-DELETE：删除任意元素（习题 6.5-10）
+
+删除下标 i 处的对象：用堆末尾元素顶上并缩小堆，再按新值与父、子的大小关系**选方向修复**——比父大则上浮（同 INCREASE-KEY 循环），否则下沉（MAX-HEAPIFY）。**O(lg n)** + 映射开销。
+
+```
+MAX-HEAP-DELETE(A, x)
+1  找到对象 x 的下标 i           // 靠句柄 / 映射表
+2  A[i] = A[A.heap-size]
+3  A.heap-size = A.heap-size − 1   // 若 x 本就是末尾元素，此后 i > heap-size，无需修复
+4  if i ≤ A.heap-size and i > 1 and A[i].key > A[PARENT(i)].key
+5      沿父链上浮（同 INCREASE-KEY 的 while 循环）
+6  else if i ≤ A.heap-size
+7      MAX-HEAPIFY(A, i)
+```
+
+> 💡 **工程意义**：`java.util.PriorityQueue` 的 `remove(Object)` 是 **O(n)**（线性查找 + 下沉修复）；若像上面这样维护了下标映射，任意删除可做到 **O(lg n)**。
+
+### 图 E：MAX-HEAP-INCREASE-KEY 的上浮过程
+
+对下图 (a) 的最大堆（即图 A 那个堆），把 `A[9]`（值 4）增加到 15。值 15 沿 **9→4→2** 一路上浮：
+
+```mermaid
+graph TD
+    subgraph S1["（a）上浮前：A[9]=4，待增加到 15"]
+      a1["1<br/>16"] --> a2["2<br/>14"]
+      a1 --> a3["3<br/>10"]
+      a2 --> a4["4<br/>8"]
+      a2 --> a5["5<br/>7"]
+      a3 --> a6["6<br/>9"]
+      a3 --> a7["7<br/>3"]
+      a4 --> a8["8<br/>2"]
+      a4 --> a9["9<br/>4"]
+      a5 --> a10["10<br/>1"]
+    end
+    subgraph S2["（d）上浮后：15 大于父 14、小于父 16，停在节点 2"]
+      b1["1<br/>16"] --> b2["2<br/>15"]
+      b1 --> b3["3<br/>10"]
+      b2 --> b4["4<br/>14"]
+      b2 --> b5["5<br/>7"]
+      b3 --> b6["6<br/>9"]
+      b3 --> b7["7<br/>3"]
+      b4 --> b8["8<br/>2"]
+      b4 --> b9["9<br/>8"]
+      b5 --> b10["10<br/>1"]
+    end
+
+    classDef rt fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef nd fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    classDef hl fill:#EF9A9A,stroke:#C62828,color:#1f1f1f
+    class a1,b1 rt
+    class a9,b2,b4,b9 hl
+    class a2,a3,a4,a5,a6,a7,a8,a10,b3,b5,b6,b7,b8,b10 nd
+
+    style S1 fill:#E3F2FD,stroke:#1976D2,color:#1f1f1f
+    style S2 fill:#E8F5E9,stroke:#388E3C,color:#1f1f1f
+```
+
+中间过程：`A[9]=15` > 父 `A[4]=8` → 交换（15 到节点 4）；15 > 父 `A[2]=14` → 交换（15 到节点 2）；15 < 父 `A[1]=16` → 停止。最终 `[16,15,10,14,7,9,3,2,8,1]`。
+
+---
+
+## 六、代码实现（0-indexed）
+
+> 约定：`left = 2i+1`，`right = 2i+2`，`parent = (i-1)/2`。
+
+### 6.1 Java：堆排序
 
 ```java
-/**
- * 堆排序实现
- */
 public class HeapSort {
-
-    /**
-     * 堆排序主方法
-     * 时间复杂度：O(n log n)
-     * 空间复杂度：O(1)
-     *
-     * @param arr 待排序数组
-     */
-    public static void sort(int[] arr) {
-        int n = arr.length;
-
-        // 1. 建堆：O(n)
-        buildMaxHeap(arr, n);
-
-        // 2. 提取元素：O(n log n)
-        for (int i = n - 1; i > 0; i--) {
-            // 将堆顶（最大元素）移到数组末尾
-            swap(arr, 0, i);
-
-            // 对堆顶进行堆化（堆大小减一）
-            heapify(arr, i, 0);
+    /** 堆排序（原地，0-indexed）。时间 O(n log n)，空间 O(1)。 */
+    public static void sort(int[] a) {
+        int n = a.length;
+        for (int i = n / 2 - 1; i >= 0; i--) siftDown(a, n, i);   // 1. 建最大堆
+        for (int i = n - 1; i > 0; i--) {                          // 2. 排序
+            swap(a, 0, i);        // 最大值归位到 i
+            siftDown(a, i, 0);    // 堆大小缩为 i，对新根下沉
         }
     }
 
-    /**
-     * 建堆
-     */
-    private static void buildMaxHeap(int[] arr, int n) {
-        // 从最后一个非叶子节点开始
-        for (int i = n / 2 - 1; i >= 0; i--) {
-            heapify(arr, n, i);
+    /** 下沉：在 [0, n) 范围内把 a[i] 下滤到正确位置。O(log n)。 */
+    private static void siftDown(int[] a, int n, int i) {
+        while (true) {
+            int l = 2 * i + 1, r = 2 * i + 2, max = i;
+            if (l < n && a[l] > a[max]) max = l;
+            if (r < n && a[r] > a[max]) max = r;
+            if (max == i) break;
+            swap(a, i, max);
+            i = max;
         }
     }
 
-    /**
-     * 堆化操作（向下堆化/下滤）
-     */
-    private static void heapify(int[] arr, int n, int i) {
-        int largest = i;       // 假设当前节点最大
-        int left = 2 * i + 1;  // 左子节点
-        int right = 2 * i + 2; // 右子节点
-
-        // 找最大节点
-        if (left < n && arr[left] > arr[largest]) {
-            largest = left;
-        }
-        if (right < n && arr[right] > arr[largest]) {
-            largest = right;
-        }
-
-        // 如果最大节点不是当前节点，交换并递归
-        if (largest != i) {
-            swap(arr, i, largest);
-            heapify(arr, n, largest);
-        }
-    }
-
-    private static void swap(int[] arr, int i, int j) {
-        int temp = arr[i];
-        arr[i] = arr[j];
-        arr[j] = temp;
-    }
-
-    /**
-     * 带详细步骤的堆排序
-     */
-    public static class WithSteps {
-
-        private static int stepCount = 0;
-
-        public static void sort(int[] arr) {
-            stepCount = 0;
-            int n = arr.length;
-
-            System.out.println("=== 堆排序过程 ===\n");
-            System.out.println("原始数组: " + java.util.Arrays.toString(arr));
-
-            // 建堆
-            buildMaxHeap(arr, n);
-            System.out.println("建堆完成: " + java.util.Arrays.toString(arr));
-
-            // 提取元素
-            for (int i = n - 1; i > 0; i--) {
-                stepCount++;
-                System.out.printf("\n第 %d 次提取:\n", stepCount);
-                System.out.printf("  交换 arr[0]=%d 和 arr[%d]=%d\n", arr[0], i, arr[i]);
-                swap(arr, 0, i);
-                System.out.printf("  交换后: " + java.util.Arrays.toString(arr) + "\n");
-                heapify(arr, i, 0);
-                System.out.printf("  堆化后: " + java.util.Arrays.toString(arr) + "\n");
-            }
-
-            System.out.println("\n排序完成: " + java.util.Arrays.toString(arr));
-        }
-
-        private static void buildMaxHeap(int[] arr, int n) {
-            for (int i = n / 2 - 1; i >= 0; i--) {
-                heapify(arr, n, i);
-            }
-        }
-
-        private static void heapify(int[] arr, int n, int i) {
-            int largest = i;
-            int left = 2 * i + 1;
-            int right = 2 * i + 2;
-
-            if (left < n && arr[left] > arr[largest]) {
-                largest = left;
-            }
-            if (right < n && arr[right] > arr[largest]) {
-                largest = right;
-            }
-
-            if (largest != i) {
-                swap(arr, i, largest);
-                heapify(arr, n, largest);
-            }
-        }
-
-        private static void swap(int[] arr, int i, int j) {
-            int temp = arr[i];
-            arr[i] = arr[j];
-            arr[j] = temp;
-        }
+    private static void swap(int[] a, int i, int j) {
+        int t = a[i]; a[i] = a[j]; a[j] = t;
     }
 }
 ```
 
-### 3.3 堆排序过程可视化
-
-```mermaid
-graph TD
-    subgraph 堆排序示例
-    Step1["原数组: 4,10,3,5,1"]
-    Step2["建堆后: 10,5,3,4,1"]
-    Step3["交换后: 1,5,3,4,10 堆化"]
-    Step4["交换后: 5,4,3,1,10 堆化"]
-    Step5["交换后: 3,4,1,5,10 堆化"]
-    Step6["交换后: 1,3,4,5,10 堆化"]
-    Step7["最终: 1,3,4,5,10"]
-    end
-
-    Step1 --> Step2
-    Step2 --> Step3
-    Step3 --> Step4
-    Step4 --> Step5
-    Step5 --> Step6
-    Step6 --> Step7
-
-    style Step7 fill:#9f9,stroke:#333
-```
-
----
-
-## 四、优先队列
-
-### 4.1 优先队列定义
-
-**优先队列**是一种数据结构，支持以下操作：
-- **Insert**：插入元素
-- **Maximum/Minimum**：获取最大/最小元素
-- **Extract-Max/Min**：移除并返回最大/最小元素
-- **Increase-Key**：增加某个元素的值
-
-```mermaid
-graph TD
-    A["优先队列操作"] --> B["插入 Insert"]
-    A --> C["获取最大 Get-Max"]
-    A --> D["提取最大 Extract-Max"]
-    A --> E["增加键值 Increase-Key"]
-
-    B --> B1["O(log n)"]
-    C --> C1["O(1)"]
-    D --> D1["O(log n)"]
-    E --> E1["O(log n)"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 4.2 优先队列实现
+### 6.2 Java：最大优先队列
 
 ```java
 import java.util.NoSuchElementException;
 
-/**
- * 基于最大堆的优先队列实现
- */
+/** 基于最大堆的最大优先队列（0-indexed）。 */
 public class MaxPriorityQueue {
-    private int[] heap;
+    private final int[] a;
     private int size;
-    private int capacity;
 
-    public MaxPriorityQueue(int capacity) {
-        this.capacity = capacity;
-        this.heap = new int[capacity];
-        this.size = 0;
-    }
+    public MaxPriorityQueue(int capacity) { a = new int[capacity]; }
 
-    /**
-     * 获取最大元素（堆顶）
-     * 时间复杂度：O(1)
-     */
+    public boolean isEmpty() { return size == 0; }
+    public int size() { return size; }
+
+    /** 取最大值（堆顶）。O(1)。 */
     public int maximum() {
-        if (size == 0) {
-            throw new NoSuchElementException("Queue is empty");
-        }
-        return heap[0];
+        if (size == 0) throw new NoSuchElementException("heap underflow");
+        return a[0];
     }
 
-    /**
-     * 提取最大元素
-     * 时间复杂度：O(log n)
-     */
+    /** 删除并返回最大值。O(log n)。 */
     public int extractMax() {
-        if (size == 0) {
-            throw new NoSuchElementException("Queue is empty");
-        }
-
-        int max = heap[0];           // 保存最大值
-        heap[0] = heap[size - 1];    // 将最后一个元素移到堆顶
-        size--;
-        maxHeapify(0);               // 堆化堆顶
-
+        int max = maximum();
+        a[0] = a[--size];          // 末尾元素顶上根
+        siftDown(0);               // 下沉
         return max;
     }
 
-    /**
-     * 增加键值
-     * 将索引 i 的元素增加到新值 key
-     * 时间复杂度：O(log n)
-     */
+    /** 把下标 i 的值增大到 key（只能增）。O(log n)。 */
     public void increaseKey(int i, int key) {
-        if (i < 0 || i >= size) {
-            throw new IndexOutOfBoundsException("Invalid index");
-        }
-        if (key < heap[i]) {
-            throw new IllegalArgumentException("New key is smaller than current key");
-        }
-
-        heap[i] = key;
-        // 可能需要上浮
-        while (i > 0 && heap[parent(i)] < heap[i]) {
-            swap(i, parent(i));
-            i = parent(i);
-        }
+        if (key < a[i]) throw new IllegalArgumentException("new key is smaller");
+        a[i] = key;
+        swim(i);                   // 上浮
     }
 
-    /**
-     * 插入元素
-     * 时间复杂度：O(log n)
-     */
+    /** 插入 key。O(log n)。 */
     public void insert(int key) {
-        if (size == capacity) {
-            throw new IllegalStateException("Queue is full");
-        }
+        if (size == a.length) throw new IllegalStateException("heap overflow");
+        a[size] = key;             // 先放末尾
+        swim(size++);              // 再上浮
+    }
 
-        heap[size] = key;  // 先放在末尾
-        size++;
-
-        // 上浮到正确位置
-        int i = size - 1;
-        while (i > 0 && heap[parent(i)] < heap[i]) {
-            swap(i, parent(i));
-            i = parent(i);
+    /** 上浮：把 a[i] 上滤到正确位置。 */
+    private void swim(int i) {
+        while (i > 0 && a[(i - 1) / 2] < a[i]) {
+            swap(i, (i - 1) / 2);
+            i = (i - 1) / 2;
         }
     }
 
-    /**
-     * 堆化（下滤）
-     */
-    private void maxHeapify(int i) {
-        int largest = i;
-        int left = 2 * i + 1;
-        int right = 2 * i + 2;
-
-        if (left < size && heap[left] > heap[largest]) {
-            largest = left;
-        }
-        if (right < size && heap[right] > heap[largest]) {
-            largest = right;
-        }
-
-        if (largest != i) {
-            swap(i, largest);
-            maxHeapify(largest);
+    /** 下沉（用内部 size）。 */
+    private void siftDown(int i) {
+        while (true) {
+            int l = 2 * i + 1, r = 2 * i + 2, max = i;
+            if (l < size && a[l] > a[max]) max = l;
+            if (r < size && a[r] > a[max]) max = r;
+            if (max == i) break;
+            swap(i, max);
+            i = max;
         }
     }
 
-    private int parent(int i) {
-        return (i - 1) / 2;
-    }
-
-    private void swap(int i, int j) {
-        int temp = heap[i];
-        heap[i] = heap[j];
-        heap[j] = temp;
-    }
-
-    public int size() {
-        return size;
-    }
-
-    public boolean isEmpty() {
-        return size == 0;
-    }
-
-    public void printHeap() {
-        System.out.print("堆: [");
-        for (int i = 0; i < size; i++) {
-            System.out.print(heap[i]);
-            if (i < size - 1) System.out.print(", ");
-        }
-        System.out.println("]");
-    }
+    private void swap(int i, int j) { int t = a[i]; a[i] = a[j]; a[j] = t; }
 }
 ```
 
-### 4.3 优先队列应用
-
-```mermaid
-graph TD
-    A["优先队列应用"] --> B["任务调度"]
-    A --> C["Dijkstra 最短路径"]
-    A --> D["Huffman 编码"]
-    A --> E["模拟系统"]
-
-    B --> B1["优先级高的任务先执行"]
-    B --> B2["操作系统进程调度"]
-
-    C --> C1["使用 min-priority queue"]
-    C --> C2["每次取未处理顶点中距离最小的"]
-
-    D --> D1["构建最小加权树"]
-    D --> D2["Prim 和 Kruskal 算法"]
-
-    style A fill:#ff9,stroke:#333
-```
-
----
-
-## 五、堆排序深入分析
-
-### 5.1 复杂度分析
-
-| 操作 | 时间复杂度 | 空间复杂度 | 说明 |
-|-----|-----------|-----------|------|
-| Build-Max-Heap | O(n) | O(1) | 原地建堆 |
-| Heapify | O(log n) | O(1) | 下滤操作 |
-| Extract-Max | O(log n) | O(1) | 交换+堆化 |
-| Heap-Sort | O(n log n) | O(1) | 原地排序 |
-
-```mermaid
-graph TD
-    A["堆排序复杂度"] --> B["建堆阶段"]
-    A --> C["排序阶段"]
-
-    B --> B1["O(n)"]
-    B --> B2["每个节点堆化代价不同"]
-
-    C --> C1["n-1 次 Extract-Max"]
-    C --> C2["每次 O(log n)"]
-    C --> C3["总时间 O(n log n)"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 5.2 原地建堆的复杂度证明
-
-**关键观察**：深度为 d 的节点最多需要 d 次交换操作。
-
-```mermaid
-graph TD
-    subgraph 建堆代价分析
-    Depth0["深度 0: 1 节点 × 0 次交换 = 0"]
-    Depth1["深度 1: 2 节点 × 1 次交换 = 2"]
-    Depth2["深度 2: 4 节点 × 2 次交换 = 8"]
-    Depth3["深度 3: 8 节点 × 3 次交换 = 24"]
-    end
-
-    subgraph 总代价
-    Total["Σ d × 2的d次方 约等于 2n"]
-    end
-```
-
-### 5.3 堆排序 vs 其他排序
-
-```mermaid
-flowchart LR
-    subgraph 排序算法对比
-    A["快速排序"] -->|"平均 O(n log n)"| B["实际应用快"]
-    C["归并排序"] -->|"O(n log n)"| D["稳定排序"]
-    E["堆排序"] -->|"O(n log n)"| F["原地排序"]
-    end
-
-    subgraph 堆排序特点
-    G["最坏情况相同"]
-    G --> H["没有归并排序的 O(n) 额外空间"]
-    G --> I["缓存不友好"]
-    G --> J["常数因子较大"]
-    end
-```
-
-| 排序算法 | 平均时间 | 最坏时间 | 空间 | 稳定性 |
-|---------|---------|---------|------|--------|
-| 堆排序 | O(n log n) | O(n log n) | O(1) | 不稳定 |
-| 快速排序 | O(n log n) | O(n²) | O(log n) | 不稳定 |
-| 归并排序 | O(n log n) | O(n log n) | O(n) | 稳定 |
-| 插入排序 | O(n²) | O(n²) | O(1) | 稳定 |
-
----
-
-## 六、Python 实现
+### 6.3 Python：堆排序
 
 ```python
-"""
-堆排序和优先队列 Python 实现
-"""
+def heap_sort(a):
+    """堆排序（原地，0-indexed）。时间 O(n log n)，空间 O(1)。"""
+    n = len(a)
 
+    def sift_down(i, size):
+        while True:
+            l, r, mx = 2 * i + 1, 2 * i + 2, i
+            if l < size and a[l] > a[mx]:
+                mx = l
+            if r < size and a[r] > a[mx]:
+                mx = r
+            if mx == i:
+                break
+            a[i], a[mx] = a[mx], a[i]
+            i = mx
 
-class MaxHeap:
-    """最大堆实现"""
+    for i in range(n // 2 - 1, -1, -1):     # 1. 建最大堆
+        sift_down(i, n)
+    for i in range(n - 1, 0, -1):            # 2. 排序
+        a[0], a[i] = a[i], a[0]
+        sift_down(0, i)
+```
 
-    def __init__(self, capacity=None):
-        self.heap = [] if capacity is None else [None] * capacity
-        self.size = 0
+> 💡 **实战提示**：日常几乎不必手写堆，理解原理即可。
+>
+> - **Java**：`java.util.PriorityQueue` 是二叉**最小堆**，`offer/poll` O(log n)、`peek` O(1)；要最大堆传比较器：`new PriorityQueue<>(Comparator.reverseOrder())`。两个坑：**没有高效 decrease-key**（改 key 后只能 `remove`（O(n)）再 `offer`，或用「懒删除」——直接再插一份新值、弹出时跳过过期副本，Dijkstra 里常用）；**非线程安全**（并发场景用 `PriorityBlockingQueue`）。
+> - **Python**：标准库 `heapq` 提供最小堆（`heapq.heapify` 建堆 O(n)、`heapq.heappush / heappop` O(log n)）；最大堆用取负模拟（见 8.2 中位数例子）。
 
-    def parent(self, i):
-        """返回父节点索引"""
-        return (i - 1) // 2
+---
 
-    def left(self, i):
-        """返回左子节点索引"""
-        return 2 * i + 1
+## 七、复杂度汇总与对比
 
-    def right(self, i):
-        """返回右子节点索引"""
-        return 2 * i + 2
+### 堆的基本操作
 
-    def swap(self, i, j):
-        """交换元素"""
-        self.heap[i], self.heap[j] = self.heap[j], self.heap[i]
+| 操作 | 时间复杂度 | 备注 |
+|------|-----------|------|
+| PARENT / LEFT / RIGHT | O(1) | 位运算 |
+| MAX-HEAPIFY | O(lg n) | 下沉，单次修复 |
+| BUILD-MAX-HEAP | **O(n)** | 自底向上，线性 |
+| HEAPSORT | **O(n log n)** | 原地、最坏（甚至最好）也是 O(n log n) |
+| MAXIMUM | O(1) | 直接取根 |
+| INSERT / EXTRACT-MAX / INCREASE-KEY / DELETE | O(lg n) | 优先队列操作；若存对象还需 **+ 对象↔下标映射开销**（句柄方案 O(1)/次，见 5.1 节） |
 
-    def max_heapify(self, i):
-        """堆化操作（下滤）"""
-        n = self.size
-        largest = i
-        l = self.left(i)
-        r = self.right(i)
+### 与其他排序对比
 
-        if l < n and self.heap[l] > self.heap[largest]:
-            largest = l
-        if r < n and self.heap[r] > self.heap[largest]:
-            largest = r
+| 排序算法 | 平均时间 | 最坏时间 | 额外空间 | 稳定性 | 特点 |
+|----------|---------|---------|---------|--------|------|
+| **堆排序** | O(n log n) | **O(n log n)** | **O(1)** | 不稳定 | 原地 + 最坏有保证 |
+| 快速排序 | O(n log n) | O(n²) | O(lg n) | 不稳定 | 实测最快、缓存友好 |
+| 归并排序 | O(n log n) | O(n log n) | O(n) | **稳定** | 要额外空间 |
+| 插入排序 | O(n²) | O(n²) | O(1) | 稳定 | 小数据 / 近乎有序最快 |
 
-        if largest != i:
-            self.swap(i, largest)
-            self.max_heapify(largest)
+> 堆排序的**优点**：原地、最坏 O(n log n)。**缺点**：不稳定、缓存不友好（数组访问跳跃大）、常数因子比快排大。所以「理论上最优（比较排序）」≠「工程上最快」。
 
-    def build_max_heap(self, arr):
-        """从数组建堆"""
-        self.heap = arr[:]
-        self.size = len(arr)
+---
 
-        # 从最后一个非叶子节点开始
-        for i in range(self.size // 2 - 1, -1, -1):
-            self.max_heapify(i)
+## 八、精选习题与面试题
 
-    def extract_max(self):
-        """提取最大元素"""
-        if self.size == 0:
-            raise IndexError("Heap is empty")
+**LeetCode 题单（堆 / 优先队列强相关）**：
 
-        max_val = self.heap[0]
-        self.heap[0] = self.heap[self.size - 1]
-        self.size -= 1
-        self.max_heapify(0)
+| 题号 | 题目 | 难度 | 考点 |
+|------|------|------|------|
+| 215 | 数组中的第 K 个最大元素 | 中等 | Top-K：大小为 K 的最小堆（见 8.1） |
+| 703 | 数据流中的第 K 大元素 | 简单 | 在线 Top-K，堆大小恒为 K |
+| 1046 | 最后一块石头的重量 | 简单 | 最大堆模拟：反复 EXTRACT-MAX + INSERT |
+| 347 | 前 K 个高频元素 | 中等 | 频率统计 + Top-K |
+| 973 | 最接近原点的 K 个点 | 中等 | Top-K 变体（key 为距离） |
+| 295 | 数据流的中位数 | 困难 | 双堆对顶（见 8.2） |
+| 23 | 合并 K 个升序链表 | 困难 | K 路归并最小堆（见 8.3，习题 6.5-11） |
 
-        return max_val
+### 8.1 经典应用：Top-K 问题（第 K 大，LeetCode 215 / 703）
 
-    def insert(self, key):
-        """插入元素"""
-        if self.size < len(self.heap):
-            self.heap[self.size] = key
-        else:
-            self.heap.append(key)
-        self.size += 1
+维护一个**大小为 K 的最小堆**：遍历数组，元素入堆，堆超过 K 就弹出堆顶（最小值）。结束时堆顶就是第 K 大。
 
-        # 上浮
-        i = self.size - 1
-        while i > 0 and self.heap[self.parent(i)] < self.heap[i]:
-            self.swap(i, self.parent(i))
-            i = self.parent(i)
+```python
+import heapq
 
-    def increase_key(self, i, key):
-        """增加键值"""
-        if key < self.heap[i]:
-            raise ValueError("New key is smaller than current key")
+def find_kth_largest(nums, k):
+    """第 K 大 / 前 K 大。维护大小为 K 的最小堆。O(n log k)。"""
+    min_heap = []
+    for x in nums:
+        heapq.heappush(min_heap, x)
+        if len(min_heap) > k:
+            heapq.heappop(min_heap)        # 弹出最小，保留最大的 K 个
+    return min_heap[0]                      # 堆顶即第 K 大
+```
 
-        self.heap[i] = key
-        # 上浮
-        while i > 0 and self.heap[self.parent(i)] < self.heap[i]:
-            self.swap(i, self.parent(i))
-            i = self.parent(i)
+> 为什么用**最小堆**找**最大**的 K 个？因为堆顶始终是当前 K 个里的最小值，新来一个更大的就把它换掉。堆大小恒为 K，复杂度 **O(n log k)**、空间 **O(k)**——远优于排序的 O(n log n)。
+>
+> 215 还有平均 **O(n)** 的**快速选择**（quickselect）解法，来自第 9 章的选择算法；面试中「堆解法 vs 快速选择」是常见追问点。
 
+### 8.2 数据流的中位数（双堆技巧，LeetCode 295）
 
-class HeapSort:
-    """堆排序"""
+用两个堆：`lo`（最大堆，装较小的一半）、`hi`（最小堆，装较大的一半），并保持 `len(lo) == len(hi)` 或 `len(lo) == len(hi)+1`。中位数就是 `lo` 的堆顶（奇数）或两堆顶平均（偶数）。
 
-    @staticmethod
-    def sort(arr):
-        """堆排序"""
-        n = len(arr)
+```python
+import heapq
 
-        # 建堆
-        heap = MaxHeap()
-        heap.build_max_heap(arr)
-
-        # 提取元素
-        for i in range(n - 1, 0, -1):
-            heap.swap(0, i)
-            heap.size -= 1
-            heap.max_heapify(0)
-
-        # 将堆内容复制回数组
-        for i in range(n):
-            arr[i] = heap.heap[i]
-
-        return arr
-
-
-class PriorityQueue:
-    """优先队列"""
-
+class MedianFinder:
     def __init__(self):
-        self.heap = MaxHeap()
+        self.lo = []    # 最大堆（Python 用负数模拟）
+        self.hi = []    # 最小堆
 
-    def is_empty(self):
-        return self.heap.size == 0
+    def add_num(self, x):
+        heapq.heappush(self.lo, -x)
+        heapq.heappush(self.hi, -heapq.heappop(self.lo))   # lo 的最大 → hi
+        if len(self.lo) < len(self.hi):                     # 平衡：hi 的最小 → lo
+            heapq.heappush(self.lo, -heapq.heappop(self.hi))
 
-    def insert(self, key):
-        self.heap.insert(key)
-
-    def maximum(self):
-        if self.heap.size == 0:
-            raise IndexError("Queue is empty")
-        return self.heap.heap[0]
-
-    def extract_max(self):
-        return self.heap.extract_max()
-
-
-if __name__ == "__main__":
-    # 测试堆排序
-    arr = [4, 10, 3, 5, 1, 8, 7, 2, 9, 6]
-    print("原数组:", arr)
-
-    HeapSort.sort(arr)
-    print("堆排序后:", arr)
-
-    # 测试优先队列
-    pq = PriorityQueue()
-    for x in [4, 10, 3, 5, 1]:
-        pq.insert(x)
-
-    print("\n优先队列测试:")
-    while not pq.is_empty():
-        print(f"提取最大: {pq.extract_max()}")
+    def find_median(self):
+        if len(self.lo) > len(self.hi):
+            return -self.lo[0]
+        return (-self.lo[0] + self.hi[0]) / 2
 ```
+
+插入 O(log n)，查中位数 O(1)。
+
+### 8.3 合并 K 个有序链表（LeetCode 23，习题 6.5-11）
+
+用大小为 K 的最小堆，每次从 K 个链表头取最小。O(n log k)，n 为总元素数。（实现略，思路同 Top-K。）
+
+### 8.4 CLRS 习题精选（第四版题号）
+
+| 习题 | 要点 |
+|------|------|
+| 6.1-1 | 高度 h 的堆：最少 **2^h** 个、最多 **2^(h+1)−1** 个元素 |
+| 6.1-2 | n 元素堆高度 = ⌊lg n⌋（用 6.1-1 的范围夹出来） |
+| 6.1-4 | 元素互异时，最小元素必在**某个叶子**（若它是非叶，它比自己的孩子还小，违反最大堆性质） |
+| 6.1-6 | 已升序数组**就是**最小堆（父下标更小 ⇒ 父值更小） |
+| 6.1-8 | 数组表示下，叶子下标为 ⌊n/2⌋+1 … n（建堆从这里推出） |
+| 6.2-2 | 根的子树规模最多 2n/3 → MAX-HEAPIFY 的递推式 |
+| 6.2-5 | `i > heap-size/2` 时 MAX-HEAPIFY 无效果——i 本就是叶子 |
+| 6.2-6 | 迭代版 MAX-HEAPIFY（消尾递归，见第六节 Java 代码） |
+| 6.3-2 / 6.3-4 | 建堆 O(n) 证明的两个技术引理：⌈n/2^(h+1)⌉ ≥ 1/2；高度 h 节点数 ≤ ⌈n/2^(h+1)⌉ |
+| 6.3-3 | 建堆为何倒序：保证调用时子树已是堆 |
+| 6.4-3 | 已升序 / 已降序输入，堆排序都是 Θ(n log n) |
+| 6.4-4 / 6.4-5 | 最坏 Ω(n lg n)；**元素互异时最好也 Ω(n lg n)**——堆排序没有「好情况」 |
+| 6.5-5 | INSERT 先置 −∞：为满足 INCREASE-KEY「新 key ≥ 旧 key」的前提 |
+| 6.5-6 | INCREASE-KEY 不能换成 MAX-HEAPIFY（方向相反：键变大只会相对父越界，下沉修不了） |
+| 6.5-8 | 上浮循环的交换可从 3 次赋值降到 1 次——学插入排序内层：先存 A[i]，逐层「父值下移」，出循环后落位 |
+| 6.5-9 | 优先队列实现 **FIFO 队列**：最小堆 + key 为递增入队序号；实现**栈**：最大堆 + 递增序号 |
+| 6.5-10 | MAX-HEAP-DELETE 任意删除 O(lg n)（见 5.3 节） |
+
+### 8.5 思考题与章末注记（第四版）
+
+**思考题 6-1 用逐个插入建堆**：`BUILD-MAX-HEAP'` 从空堆出发反复 `MAX-HEAP-INSERT`。
+
+- (a) 与自底向上的 BUILD-MAX-HEAP **不总产生相同的堆**。反例 `A = [1, 2, 3]`：自底向上得 `[3, 2, 1]`，逐个插入得 `[3, 1, 2]`。
+- (b) 最坏 **Θ(n lg n)**（输入递增时每个新元素都是当前最大元，第 i 次插入一路**上浮到根**，代价 Θ(lg i)，求和即 Θ(n lg n)）——**这就是为什么建堆要选自底向上下沉（O(n)）而不是逐个插入**。
+
+**思考题 6-2 d 叉堆**：非叶节点有 d 个孩子，仍按层序存数组（父 `⌊(i−2)/d⌋+1`，孩子 `d(i−1)+2 … di+1`）。
+
+| 操作 | 二叉堆 (d=2) | d 叉堆 | 原因 |
+|------|-------------|--------|------|
+| 高度 | Θ(lg n) | **Θ(log_d n)** | 树更矮 |
+| EXTRACT-MAX | Θ(lg n) | **Θ(d · log_d n)** | 下沉每层要在 d 个孩子中挑最大 |
+| INCREASE-KEY / INSERT | Θ(lg n) | **Θ(log_d n)** | 上浮只跟父比，层数变少 |
+
+d 大则「上浮便宜、下沉贵」——DECREASE-KEY / INSERT 密集而 EXTRACT 较少的场景（如 Dijkstra 的稠密图）可以考虑 d > 2 来折中。
+
+**思考题 6-3 Young 氏矩阵**：m×n 矩阵，每行每列各自升序（空位填 ∞）。
+
+- EXTRACT-MIN：取 `Y[1,1]`，用 ∞ 补位后与**右、下**邻居中较小者交换，递归修复——每步消去一行或一列，**O(m + n)**（就是二维版 MAX-HEAPIFY）。
+- 判存性：从**右上角**出发，大了左移、小了下移，**O(m + n)**。
+- 用 n×n Young 氏矩阵可对 n² 个数排序：**O(n³)**（n² 次 O(n+n) 的 EXTRACT-MIN）。
+
+**章末注记（历史与前沿）**：堆排序由 **Williams** 发明（他同时给出了堆实现优先队列的方法）；线性时间建堆 BUILD-MAX-HEAP 由 **Floyd** 提出。若 key 有整数等特殊结构，优先队列还能更快：**斐波那契堆**把 INSERT / DECREASE-KEY 做到摊还 O(1)（第 16 章）；key 取自 {0, 1, …, n−1} 时 **van Emde Boas 树**各操作 O(lg lg n)；EXTRACT-MIN 输出单调递增的场景（如 Dijkstra、离散事件模拟）可用 **radix heap** 把 DECREASE-KEY 做到 O(1)。
 
 ---
 
-## 七、堆的应用扩展
-
-### 7.1 堆的变体
-
-```mermaid
-graph TD
-    A["堆的变体"] --> B["二叉堆"]
-    A --> C["二叉左倾堆"]
-    A --> D["二项堆"]
-    A --> E["斐波那契堆"]
-
-    B --> B1["O(log n) 插入/删除"]
-    B --> B2["简单实现"]
-
-    C --> C1["左倾性质"]
-    C --> C2["路径长度更短"]
-
-    D --> D1["合并操作 O(log n)"]
-    D --> D2["支持所有操作"]
-
-    E --> E1["均摊分析"]
-    E --> E2["Dijkstra 最佳"]
-```
-
-### 7.2 使用堆的经典算法
-
-```java
-/**
- * 使用堆的经典算法
- */
-public class HeapAlgorithms {
-
-    /**
-     * 算法1：找到第 k 大元素
-     * 使用大小为 k 的最小堆
-     * 时间复杂度：O(n log k)
-     */
-    public static int findKthLargest(int[] arr, int k) {
-        MinHeap minHeap = new MinHeap(k);
-
-        for (int num : arr) {
-            if (minHeap.size() < k) {
-                minHeap.insert(num);
-            } else if (num > minHeap.peek()) {
-                minHeap.extractMin();
-                minHeap.insert(num);
-            }
-        }
-
-        return minHeap.peek();
-    }
-
-    /**
-     * 算法2：实现 Stack 的 getMin 功能
-     * 使用辅助栈
-     */
-    public static class MinStack {
-        private java.util.Stack<Integer> stack;
-        private java.util.Stack<Integer> minStack;
-
-        public MinStack() {
-            stack = new java.util.Stack<>();
-            minStack = new java.util.Stack<>();
-        }
-
-        public void push(int val) {
-            stack.push(val);
-            if (minStack.isEmpty() || val <= minStack.peek()) {
-                minStack.push(val);
-            }
-        }
-
-        public void pop() {
-            if (stack.pop().equals(minStack.peek())) {
-                minStack.pop();
-            }
-        }
-
-        public int top() {
-            return stack.peek();
-        }
-
-        public int getMin() {
-            return minStack.peek();
-        }
-    }
-
-    /**
-     * 算法3：滑动窗口最大值
-     * 使用双端队列（单调队列）
-     */
-    public static int[] slidingWindowMax(int[] arr, int k) {
-        if (arr.length == 0) return new int[0];
-
-        java.util.Deque<Integer> deque = new java.util.ArrayDeque<>();
-        int[] result = new int[arr.length - k + 1];
-
-        for (int i = 0; i < arr.length; i++) {
-            // 移除窗口外的元素
-            if (!deque.isEmpty() && deque.peekFirst() <= i - k) {
-                deque.pollFirst();
-            }
-
-            // 保持队列递减
-            while (!deque.isEmpty() && arr[deque.peekLast()] <= arr[i]) {
-                deque.pollLast();
-            }
-            deque.offerLast(i);
-
-            // 记录结果
-            if (i >= k - 1) {
-                result[i - k + 1] = arr[deque.peekFirst()];
-            }
-        }
-
-        return result;
-    }
-
-    /**
-     * 算法4：合并 k 个有序数组
-     * 使用最小堆
-     */
-    public static List<Integer> mergeKArrays(List<int[]> arrays) {
-        java.util.List<Integer> result = new java.util.ArrayList<>();
-        java.util.PriorityQueue<int[]> pq = new java.util.PriorityQueue<>(
-            (a, b) -> Integer.compare(a[0], b[0])
-        );
-
-        // 将每个数组的第一个元素入队
-        for (int i = 0; i < arrays.size(); i++) {
-            int[] arr = arrays.get(i);
-            if (arr.length > 0) {
-                pq.offer(new int[]{arr[0], i, 0});  // value, arrayIndex, elementIndex
-            }
-        }
-
-        while (!pq.isEmpty()) {
-            int[] curr = pq.poll();
-            result.add(curr[0]);
-
-            int arrIdx = curr[1];
-            int elemIdx = curr[2];
-            int[] arr = arrays.get(arrIdx);
-
-            if (elemIdx + 1 < arr.length) {
-                pq.offer(new int[]{arr[elemIdx + 1], arrIdx, elemIdx + 1});
-            }
-        }
-
-        return result;
-    }
-}
-```
-
-### 7.3 堆排序应用场景
+## 九、本章要点回顾
 
 ```mermaid
 flowchart TD
-    A["堆排序适用场景"] --> B["内存受限环境"]
-    A --> C["需要原地排序"]
-    A --> D["top-k 问题"]
-    A --> E["实时系统"]
+    A["堆 = 数组化的完全二叉树<br/>父 i/2，子 2i / 2i+1"] --> B["两类修复方向"]
+    B --> C["下沉 sift-down<br/>MAX-HEAPIFY · EXTRACT-MAX"]
+    B --> D["上浮 swim<br/>INCREASE-KEY · INSERT"]
+    C --> E["BUILD-MAX-HEAP<br/>自底向上 O(n)"]
+    E --> F["HEAPSORT<br/>原地 O(n log n)，最坏同"]
+    A --> G["优先队列<br/>所有操作 O(lg n)"]
 
-    B --> B1["O(1) 额外空间"]
-    C --> C1["不适合快速排序的场景"]
-    D --> D1["找第 k 大/小元素"]
-    D --> D2["流数据中的 top-k"]
-
-    E --> E1["最坏情况有保证"]
-    E --> E2["无最坏情况 O(n²) 风险"]
-
-    style A fill:#ff9,stroke:#333
+    style A fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    style B fill:#80DEEA,stroke:#0097A7,color:#1f1f1f
+    style C fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    style D fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    style E fill:#CE93D8,stroke:#7B1FA2,color:#1f1f1f
+    style F fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    style G fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
 ```
 
----
-
-## 八、总结与要点
-
-### 8.1 核心概念回顾
-
-```mermaid
-flowchart TD
-    A["第六章核心"] --> B["二叉堆"]
-    A --> C["堆操作"]
-    A --> D["堆排序"]
-    A --> E["优先队列"]
-
-    B --> B1["完全二叉树"]
-    B --> B2["堆性质：父 ≥ 子"]
-    B --> B3["数组存储"]
-
-    C --> C1["Max-Heapify O(log n)"]
-    C --> C2["Build-Heap O(n)"]
-    C --> C3["Extract-Max O(log n)"]
-
-    D --> D1["原地排序"]
-    D --> D2["O(n log n)"]
-    D --> D3["不稳定"]
-
-    E --> E1["Insert O(log n)"]
-    E --> E2["Extract-Max O(log n)"]
-    E --> E3["Get-Max O(1)"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 8.2 操作复杂度总结
-
-| 操作 | 二叉堆 | 二项堆 | 斐波那契堆 |
-|-----|-------|-------|-----------|
-| Insert | O(log n) | O(log n) | O(1) 均摊 |
-| Extract-Max | O(log n) | O(log n) | O(log n) 均摊 |
-| Merge | O(n) | O(log n) | O(1) 均摊 |
-| Get-Max | O(1) | O(1) | O(1) |
-
-### 8.3 堆排序特点
-
-**优点**：
-- 最坏情况 O(n log n)
-- O(1) 额外空间（原地排序）
-- 不需要递归（可实现为迭代）
-
-**缺点**：
-- 不稳定排序
-- 缓存不友好（访问不连续）
-- 常数因子较大（比快速排序慢）
-
----
-
-## 九、举一反三
-
-### 9.1 相关 LeetCode 题目
-
-| 题目 | 难度 | 核心考点 |
-|-----|------|---------|
-| [215. 数组中的第 K 个最大元素](https://leetcode.cn/problems/kth-largest-element-in-an-array/) | 中等 | 快速选择 / 堆 |
-| [347. 前 K 个高频元素](https://leetcode.cn/problems/top-k-frequent-elements/) | 中等 | 堆 + 哈希表 |
-| [295. 数据流的中位数](https://leetcode.cn/problems/find-median-from-data-stream/) | 困难 | 双堆技巧 |
-| [703. 数据流中的第 K 大元素](https://leetcode.cn/problems/kth-largest-element-in-a-stream/) | 简单 | 最小堆 |
-| [973. 最接近原点的 K 个点](https://leetcode.cn/problems/k-closest-points-to-origin/) | 中等 | 最大堆 |
-| [378. 有序矩阵中第 K 小的元素](https://leetcode.cn/problems/kth-smallest-element-in-a-sorted-matrix/) | 中等 | 堆 / 二分查找 |
-| [692. 前 K 个高频单词](https://leetcode.cn/problems/top-k-frequent-words/) | 中等 | 堆 + 字典序 |
-| [373. 查找和最小的 K 对数字](https://leetcode.cn/problems/find-k-pairs-with-smallest-sums/) | 中等 | 双指针 + 堆 |
-
-### 9.2 经典题目解析
-
-#### 题目：215. 数组中的第 K 个最大元素
-
-**题目描述**：给定整数数组 nums 和整数 k，返回数组中第 k 个最大的元素。
-
-**解题思路**：
-
-```mermaid
-flowchart TD
-    A["找第 K 大元素"] --> B{"数据规模?"}
-    B -->|小数据| C["排序后取第 K 个 O(n log n)"]
-    B -->|大数据| D["快速选择 O(n)"]
-    B -->|流数据| E["维护大小为 K 的堆 O(n log k)"]
-
-    style C fill:#9ff,stroke:#333
-    style D fill:#9f9,stroke:#333
-    style E fill:#ff9,stroke:#333
-```
-
-**Java 实现（堆方法）**：
-```java
-class Solution {
-    public int findKthLargest(int[] nums, int k) {
-        // 最小堆，堆顶是第 K 大的元素
-        PriorityQueue<Integer> minHeap = new PriorityQueue<>();
-
-        for (int num : nums) {
-            minHeap.offer(num);
-            if (minHeap.size() > k) {
-                minHeap.poll();  // 移除最小的，保持堆大小为 K
-            }
-        }
-
-        return minHeap.peek();  // 堆顶就是第 K 大元素
-    }
-}
-```
-
-**复杂度分析**：
-| 方法 | 时间复杂度 | 空间复杂度 | 适用场景 |
-|-----|-----------|-----------|---------|
-| 排序 | O(n log n) | O(1) | 数据量小 |
-| 快速选择 | O(n) | O(log n) | 需要最优平均性能 |
-| 最小堆 | O(n log k) | O(k) | 数据量大，k 较小 |
-
----
-
-### 9.3 变形题目
-
-1. **top-k 问题变体**：
-   - 动态数据流中的 top-k（维护堆大小）
-   - 带权重的时间衰减 top-k
-   - 多维度排序的 top-k
-
-2. **中位数问题**：
-   - 数据流中动态维护中位数（双堆法）
-   - 带插入和删除的中位数维护
-
-3. **堆的变体应用**：
-   - 斐波那契堆用于 Dijkstra 算法优化
-   - 二项堆用于高效合并
-
-### 9.4 核心思想迁移
-
-| 思想 | 迁移应用 |
-|-----|---------|
-| 堆的性质 | 优先级调度、任务队列 |
-| 建堆 O(n) | 批量初始化、一次性构建 |
-| 原地排序 | 内存受限环境的排序 |
-| top-k 技巧 | 推荐系统、监控系统 |
-| 双堆技巧 | 中位数、流式统计 |
-
-### 9.5 思考题答案
-
-**题目 1**：堆排序的时间复杂度分析
-- 建堆：O(n)
-- 排序：O(n log n)
-- 总计：O(n log n)
-
-**题目 2**：最小堆操作时间复杂度
-| 操作 | 时间复杂度 |
-|-----|-----------|
-| Insert | O(log n) |
-| Delete-Min | O(log n) |
-| Decrease-Key | O(log n) |
-| Get-Min | O(1) |
-
-**题目 3**：数据流找第 k 大元素
-- 使用大小为 k 的最小堆
-- 遍历数据流，维护堆大小为 k
-- 堆顶即为第 k 大元素
-- 时间复杂度：O(n log k)，空间复杂度：O(k)
-
-**题目 4**：堆排序 vs 快速排序对比
-| 特性 | 堆排序 | 快速排序 |
-|-----|-------|---------|
-| 最坏时间 | O(n log n) | O(n²) |
-| 平均时间 | O(n log n) | O(n log n) |
-| 空间 | O(1) | O(log n) |
-| 稳定性 | 不稳定 | 不稳定 |
-| 缓存友好 | 差 | 好 |
-| 适用场景 | 内存受限、有最坏情况要求 | 通用排序 |
-
----
-
-*本章精读笔记完成*
+**一句话记忆**：
+- 堆 = 数组里的完全二叉树，靠下标算父子关系；
+- **下沉**修「根变小」，**上浮**修「叶变大」；
+- 建堆 **O(n)**（按高度求和），堆排序 **O(n log n)** 且原地、最坏同阶，是比较排序的渐进最优解。

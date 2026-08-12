@@ -1,1397 +1,375 @@
-# 第十章：基本数据结构
+# 第十章：基本数据结构（Elementary Data Structures）
 
-## 一、数据结构概述
-
-### 1.1 什么是数据结构
-
-**数据结构**是组织和存储数据的方式，使得数据可以被高效地访问和修改。
-
-```mermaid
-flowchart TD
-    A["数据结构"] --> B["逻辑结构"]
-    A --> C["物理结构"]
-    A --> D["操作"]
-
-    B --> B1["线性结构：栈、队列、链表"]
-    B --> B2["树形结构：二叉树、B树"]
-    B --> B3["图形结构：图、网络"]
-
-    C --> C1["顺序存储：数组"]
-    C --> C2["链式存储：链表"]
-
-    D --> D1["增删改查"]
-    D --> D2["遍历"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 1.2 本章内容概览
-
-```mermaid
-graph TD
-    A["本章数据结构"] --> B["栈 Stack"]
-    A --> C["队列 Queue"]
-    A --> D["链表 Linked List"]
-    A --> E["指针和对象"]
-
-    B --> B1["LIFO 后进先出"]
-    B --> B2["Push/Pop/Peek"]
-    B --> B3["应用：函数调用、表达式求值"]
-
-    C --> C1["FIFO 先进先出"]
-    C --> C2["Enqueue/Dequeue"]
-    C --> C3["应用：任务调度、缓冲"]
-
-    D --> D1["单链表、双链表、循环链表"]
-    D --> D2["动态插入删除"]
-```
+> **定位**：栈、队列、链表、有根树是**动态集合**（dynamic set）的基石——后续几乎所有数据结构都建立其上。本章不讲「如何用 Java 写一个 LinkedList 类」，而是讲它们的**抽象定义、伪代码和表示技巧**：栈/队列的数组 + 指针、链表的指针串联与哨兵、有根树的**左孩子右兄弟**表示。
+> **后向指针**：栈→第 22 章 DFS 与递归调用栈；队列→第 20 章 BFS；链表→第 11 章哈希表的链地址法、第 23 章图的邻接表；有根树→第 12 章 BST、第 13 章红黑树、第 6 章堆。
+>
+> 对照第四版书页 252–268（**注意**：第四版删去了第三版的「指针和对象的实现」一节，只保留三节）。
 
 ---
 
-## 二、栈
+## 一、栈和队列（§10.1）
 
-### 2.1 栈的定义
+两者都是**动态集合**，区别只在删除元素的位置：栈删**最新插入**的（LIFO），队列删**最早插入**的（FIFO）。所有操作都 Θ(1)。
 
-**栈**是一种**后进先出**（LIFO, Last-In-First-Out）的数据结构。
+### 1.1 栈（LIFO）
 
-```mermaid
-graph TD
-    subgraph StackVisualization
-    Direction["数据流向：入栈，出栈"]
+用数组 `S[1..n]` + 属性 `S.top`（栈顶下标，0 表示空）：
 
-    Top["栈顶 Top"]
-    Elem4["元素4"] --> Elem3["元素3"]
-    Elem3 --> Elem2["元素2"]
-    Elem2 --> Elem1["元素1"]
-    Bottom["栈底 Bottom"]
-    end
-
-    style Top fill:#9f9,stroke:#333
+```
+STACK-EMPTY(S)        PUSH(S, x)            POP(S)
+1  if S.top == 0      1  S.top = S.top + 1   1  if STACK-EMPTY(S) error underflow
+2      return TRUE    2  S[S.top] = x         2  else S.top = S.top - 1
+3  else return FALSE                          3  return S[S.top + 1]
 ```
 
-### 2.2 栈的操作
+> **下溢/溢出**：空栈 POP 是下溢（错误）；`S.top > n` 是溢出（需扩容或报错）。均摊分析下，动态扩容的栈 PUSH 仍 Θ(1) 摊还（见第 16 章摊还分析）。
 
-```java
-/**
- * 栈接口
- */
-public interface Stack<E> {
-    /**
-     * 入栈
-     */
-    void push(E element);
+### 1.2 队列（FIFO）
 
-    /**
-     * 出栈
-     * @return 栈顶元素
-     * @throws java.util.NoSuchElementException 如果栈为空
-     */
-    E pop();
+用数组 `Q[1..n]` + `Q.head`（队首）和 `Q.tail`（下一个入队位置），**环形**复用：
 
-    /**
-     * 查看栈顶元素（不出栈）
-     * @return 栈顶元素
-     */
-    E peek();
-
-    /**
-     * 判断栈是否为空
-     */
-    boolean isEmpty();
-
-    /**
-     * 返回栈中元素个数
-     */
-    int size();
-}
+```
+ENQUEUE(Q, x)                      DEQUEUE(Q)
+1  Q[Q.tail] = x                    1  x = Q[Q.head]
+2  if Q.tail == Q.length            2  if Q.head == Q.length
+3      Q.tail = 1                       3      Q.head = 1
+4  else Q.tail = Q.tail + 1         4  else Q.head = Q.head + 1
+5  return x
 ```
 
-### 2.3 数组实现
+> **空/满区分**：`Q.head == Q.tail` 既可能是空也可能是满。两种解法：① 维护 `Q.size` 计数；② **浪费一个槽位**，`(Q.tail + 1) mod Q.length == Q.head` 时视为满（故容量 n 的数组最多存 n−1 个元素）。习题 10.1-5 即要求补上溢/下溢检查。
 
-```java
-import java.util.NoSuchElementException;
+### 1.3 复杂度
 
-/**
- * 栈的数组实现
- */
-public class ArrayStack<E> implements Stack<E> {
-    private E[] data;       // 存储数据的数组
-    private int size;       // 当前元素个数
-    private int capacity;   // 数组容量
-
-    public ArrayStack() {
-        this.capacity = 16;
-        this.data = (E[]) new Object[capacity];
-        this.size = 0;
-    }
-
-    public ArrayStack(int capacity) {
-        this.capacity = capacity;
-        this.data = (E[]) new Object[capacity];
-        this.size = 0;
-    }
-
-    /**
-     * 入栈
-     * 时间复杂度：均摊 O(1)
-     */
-    @Override
-    public void push(E element) {
-        if (size == capacity) {
-            resize(capacity * 2);  // 动态扩容
-        }
-        data[size++] = element;
-    }
-
-    /**
-     * 出栈
-     * 时间复杂度：O(1)
-     */
-    @Override
-    public E pop() {
-        if (isEmpty()) {
-            throw new NoSuchElementException("Stack is empty");
-        }
-        E element = data[--size];
-        data[size] = null;  // 避免内存泄漏
-
-        // 缩容（可选，防止内存浪费）
-        if (size > 0 && size == capacity / 4) {
-            resize(capacity / 2);
-        }
-
-        return element;
-    }
-
-    /**
-     * 查看栈顶元素
-     * 时间复杂度：O(1)
-     */
-    @Override
-    public E peek() {
-        if (isEmpty()) {
-            throw new NoSuchElementException("Stack is empty");
-        }
-        return data[size - 1];
-    }
-
-    @Override
-    public boolean isEmpty() {
-        return size == 0;
-    }
-
-    @Override
-    public int size() {
-        return size;
-    }
-
-    /**
-     * 动态扩容/缩容
-     * 时间复杂度：均摊 O(1)
-     */
-    private void resize(int newCapacity) {
-        E[] newData = (E[]) new Object[newCapacity];
-        System.arraycopy(data, 0, newData, 0, size);
-        data = newData;
-        capacity = newCapacity;
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("ArrayStack: [");
-        for (int i = size - 1; i >= 0; i--) {
-            sb.append(data[i]);
-            if (i > 0) sb.append(", ");
-        }
-        sb.append("] (top)");
-        return sb.toString();
-    }
-}
-```
-
-### 2.4 链表实现
-
-```java
-/**
- * 栈的链表实现
- */
-public class LinkedStack<E> implements Stack<E> {
-    private Node top;  // 栈顶节点
-    private int size;  // 元素个数
-
-    private class Node {
-        E element;
-        Node next;
-
-        Node(E element) {
-            this.element = element;
-        }
-    }
-
-    public LinkedStack() {
-        this.top = null;
-        this.size = 0;
-    }
-
-    /**
-     * 入栈：在链表头部插入
-     * 时间复杂度：O(1)
-     */
-    @Override
-    public void push(E element) {
-        Node newNode = new Node(element);
-        newNode.next = top;
-        top = newNode;
-        size++;
-    }
-
-    /**
-     * 出栈：删除链表头部
-     * 时间复杂度：O(1)
-     */
-    @Override
-    public E pop() {
-        if (isEmpty()) {
-            throw new NoSuchElementException("Stack is empty");
-        }
-        E element = top.element;
-        top = top.next;
-        size--;
-        return element;
-    }
-
-    /**
-     * 查看栈顶元素
-     * 时间复杂度：O(1)
-     */
-    @Override
-    public E peek() {
-        if (isEmpty()) {
-            throw new NoSuchElementException("Stack is empty");
-        }
-        return top.element;
-    }
-
-    @Override
-    public boolean isEmpty() {
-        return top == null;
-    }
-
-    @Override
-    public int size() {
-        return size;
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("LinkedStack: [");
-        Node current = top;
-        while (current != null) {
-            sb.append(current.element);
-            if (current.next != null) sb.append(", ");
-            current = current.next;
-        }
-        sb.append("] (top)");
-        return sb.toString();
-    }
-}
-```
-
-### 2.5 栈的应用
-
-```mermaid
-graph TD
-    A["栈的应用场景"] --> B["函数调用栈"]
-    A --> C["表达式求值"]
-    A --> D["括号匹配"]
-    A --> E["浏览器前进后退"]
-
-    B --> B1["保存返回地址和局部变量"]
-    B --> B2["递归调用的实现基础"]
-
-    C --> C1["中缀表达式转后缀"]
-    C --> C2["后缀表达式求值"]
-
-    D --> D1["检查括号是否配对"]
-    D2["Brackets: { [ ( } ] )"]
-
-    E --> E1["历史记录栈"]
-    E2["前进栈和后退栈"]
-```
-
-### 2.6 表达式求值示例
-
-```java
-/**
- * 表达式求值：后缀表达式计算器
- */
-public class PostfixEvaluator {
-    private Stack<Integer> stack;
-
-    public PostfixEvaluator() {
-        stack = new ArrayStack<>();
-    }
-
-    /**
-     * 计算后缀表达式
-     *
-     * @param expr 后缀表达式，如 "5 3 + 8 *"
-     * @return 计算结果
-     */
-    public int evaluate(String expr) {
-        String[] tokens = expr.split("\\s+");
-
-        for (String token : tokens) {
-            if (isNumber(token)) {
-                stack.push(Integer.parseInt(token));
-            } else if (isOperator(token)) {
-                int b = stack.pop();  // 注意：第二个操作数先出栈
-                int a = stack.pop();
-                int result = applyOperator(a, b, token);
-                stack.push(result);
-            }
-        }
-
-        if (stack.size() != 1) {
-            throw new IllegalArgumentException("Invalid expression");
-        }
-
-        return stack.pop();
-    }
-
-    private boolean isNumber(String token) {
-        try {
-            Integer.parseInt(token);
-            return true;
-        } catch (NumberFormatException e) {
-            return false;
-        }
-    }
-
-    private boolean isOperator(String token) {
-        return token.equals("+") || token.equals("-") ||
-               token.equals("*") || token.equals("/");
-    }
-
-    private int applyOperator(int a, int b, String operator) {
-        switch (operator) {
-            case "+": return a + b;
-            case "-": return a - b;
-            case "*": return a * b;
-            case "/":
-                if (b == 0) throw new ArithmeticException("Division by zero");
-                return a / b;
-            default:
-                throw new IllegalArgumentException("Unknown operator: " + operator);
-        }
-    }
-
-    /**
-     * 中缀表达式转后缀表达式
-     */
-    public static String infixToPostfix(String infix) {
-        StringBuilder result = new StringBuilder();
-        Stack<Character> stack = new ArrayStack<>();
-
-        for (int i = 0; i < infix.length(); i++) {
-            char c = infix.charAt(i);
-
-            if (Character.isDigit(c) || Character.isLetter(c)) {
-                // 操作数直接输出
-                result.append(c).append(' ');
-            } else if (c == '(') {
-                stack.push(c);
-            } else if (c == ')') {
-                // 弹出直到遇到 '('
-                while (!stack.isEmpty() && stack.peek() != '(') {
-                    result.append(stack.pop()).append(' ');
-                }
-                if (!stack.isEmpty()) {
-                    stack.pop();  // 弹出 '('
-                }
-            } else if (isOperator(c)) {
-                // 处理运算符优先级
-                while (!stack.isEmpty() && precedence(stack.peek()) >= precedence(c)) {
-                    result.append(stack.pop()).append(' ');
-                }
-                stack.push(c);
-            }
-        }
-
-        while (!stack.isEmpty()) {
-            result.append(stack.pop()).append(' ');
-        }
-
-        return result.toString().trim();
-    }
-
-    private static int precedence(char op) {
-        if (op == '+' || op == '-') return 1;
-        if (op == '*' || op == '/') return 2;
-        return 0;
-    }
-
-    public static void main(String[] args) {
-        PostfixEvaluator evaluator = new PostfixEvaluator();
-
-        // 计算后缀表达式
-        System.out.println("5 3 + 8 * = " + evaluator.evaluate("5 3 + 8 *"));  // 64
-        System.out.println("7 3 + = " + evaluator.evaluate("7 3 +"));  // 10
-
-        // 中缀转后缀
-        String infix = "A + B * C - D / E";
-        String postfix = infixToPostfix(infix);
-        System.out.println(infix + " -> " + postfix);  // A B C * + D E / -
-    }
-}
-```
+| 操作 | 栈 | 队列 |
+|------|----|------|
+| 插入（PUSH / ENQUEUE） | Θ(1) | Θ(1) |
+| 删除（POP / DEQUEUE） | Θ(1) | Θ(1) |
+| 判空 | Θ(1) | Θ(1) |
 
 ---
 
-## 三、队列
+## 二、链表（§10.2）
 
-### 3.1 队列的定义
+数组随机访问 Θ(1) 但中间插入删除 Θ(n)；链表反过来——**指针串联**，插入删除 Θ(1)（已知节点位置时），但随机访问 Θ(n)。
 
-**队列**是一种**先进先出**（FIFO, First-In-First-Out）的数据结构。
+### 2.1 三种链表
 
-```mermaid
-graph LR
-    subgraph QueueVisualization
-    Direction["数据流向：← 出队，← 入队"]
+- **单链表**：每个节点只有 `next`。
+- **双向链表**：每个节点有 `prev` 和 `next`，可双向遍历，**O(1) 删除**（已知节点）。
+- **循环链表**：表尾的 `next` 指回表头（可单可双）。
 
-    Rear["队尾 Rear"] --> Elem4["元素4"]
-    Elem4 --> Elem3["元素3"]
-    Elem3 --> Elem2["元素2"]
-    Elem2 --> Elem1["元素1"]
-    Elem1 --> Front["队首 Front"]
-    end
+### 2.2 双向链表伪代码（带哨兵 L.nil）
 
-    style Rear fill:#f96,stroke:#333
-    style Front fill:#9f9,stroke:#333
+CLRS 用**哨兵节点 `L.nil`** 把表头尾的边界条件统一：空表时 `L.nil.next = L.nil.prev = L.nil`，所有「表头/表尾」判断都不再是特例。
+
+```
+LIST-SEARCH(L, k)                   LIST-INSERT(L, x)        // 插到表头
+1  x = L.nil.next                   1  x.next = L.nil.next
+2  while x != L.nil and x.key != k  2  L.nil.next.prev = x
+3      x = x.next                   3  L.nil.next = x
+4  return x                         4  x.prev = L.nil
+
+LIST-DELETE(L, x)
+1  x.prev.next = x.next
+2  x.next.prev = x.prev
 ```
 
-### 3.2 队列的操作
+> **哨兵的价值**：让 INSERT/DELETE 不必特判「插到空表」「删头/尾节点」——代码更短、更不易错。哨兵不存数据，只占一个节点空间（常数开销）。
 
-```java
-/**
- * 队列接口
- */
-public interface Queue<E> {
-    /**
-     * 入队
-     */
-    void enqueue(E element);
+### 2.3 删除的关键区别（习题 10.2-1）
 
-    /**
-     * 出队
-     * @return 队首元素
-     */
-    E dequeue();
+- **单链表删除节点 x**：必须知道 x 的**前驱**（O(n) 查找），故删除是 Θ(n)。
+- **双向链表删除节点 x**：x 自带 `prev`，O(1) 完成。
+- **LC 237「删除节点」的取巧**：无法访问前驱时，把 `x.next` 的值复制到 x，再删 `x.next`——但**删不了尾节点**。
 
-    /**
-     * 查看队首元素
-     */
-    E peek();
+### 2.4 复杂度
 
-    /**
-     * 判断队列是否为空
-     */
-    boolean isEmpty();
-
-    /**
-     * 返回队列中元素个数
-     */
-    int size();
-}
-```
-
-### 3.3 循环队列实现
-
-```java
-/**
- * 循环队列实现
- * 使用数组，支持 O(1) 的入队和出队操作
- */
-public class ArrayQueue<E> implements Queue<E> {
-    private E[] data;      // 存储数据的数组
-    private int front;     // 队首指针
-    private int rear;      // 队尾指针
-    private int size;      // 当前元素个数
-    private int capacity;  // 队列容量
-
-    @SuppressWarnings("unchecked")
-    public ArrayQueue(int capacity) {
-        this.capacity = capacity + 1;  // 多一个位置用于区分空/满
-        this.data = (E[]) new Object[capacity + 1];
-        this.front = 0;
-        this.rear = 0;
-        this.size = 0;
-    }
-
-    /**
-     * 入队
-     * 时间复杂度：O(1)
-     */
-    @Override
-    public void enqueue(E element) {
-        if (isFull()) {
-            throw new IllegalStateException("Queue is full");
-        }
-        data[rear] = element;
-        rear = (rear + 1) % capacity;
-        size++;
-    }
-
-    /**
-     * 出队
-     * 时间复杂度：O(1)
-     */
-    @Override
-    public E dequeue() {
-        if (isEmpty()) {
-            throw new NoSuchElementException("Queue is empty");
-        }
-        E element = data[front];
-        front = (front + 1) % capacity;
-        size--;
-        return element;
-    }
-
-    /**
-     * 查看队首元素
-     * 时间复杂度：O(1)
-     */
-    @Override
-    public E peek() {
-        if (isEmpty()) {
-            throw new NoSuchElementException("Queue is empty");
-        }
-        return data[front];
-    }
-
-    @Override
-    public boolean isEmpty() {
-        return front == rear && size == 0;
-    }
-
-    public boolean isFull() {
-        return front == rear && size > 0;
-    }
-
-    @Override
-    public int size() {
-        return size;
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("ArrayQueue: [");
-        int current = front;
-        for (int i = 0; i < size; i++) {
-            sb.append(data[current]);
-            if (i < size - 1) sb.append(", ");
-            current = (current + 1) % capacity;
-        }
-        sb.append("] (front -> rear)");
-        return sb.toString();
-    }
-}
-```
-
-### 3.4 链表实现
-
-```java
-/**
- * 队列的链表实现
- */
-public class LinkedQueue<E> implements Queue<E> {
-    private Node front;  // 队首节点
-    private Node rear;   // 队尾节点
-    private int size;    // 元素个数
-
-    private class Node {
-        E element;
-        Node next;
-
-        Node(E element) {
-            this.element = element;
-        }
-    }
-
-    public LinkedQueue() {
-        this.front = null;
-        this.rear = null;
-        this.size = 0;
-    }
-
-    /**
-     * 入队：在链表尾部添加
-     * 时间复杂度：O(1)
-     */
-    @Override
-    public void enqueue(E element) {
-        Node newNode = new Node(element);
-        if (isEmpty()) {
-            front = newNode;
-            rear = newNode;
-        } else {
-            rear.next = newNode;
-            rear = newNode;
-        }
-        size++;
-    }
-
-    /**
-     * 出队：删除链表头部
-     * 时间复杂度：O(1)
-     */
-    @Override
-    public E dequeue() {
-        if (isEmpty()) {
-            throw new NoSuchElementException("Queue is empty");
-        }
-        E element = front.element;
-        front = front.next;
-        size--;
-
-        if (isEmpty()) {
-            rear = null;  // 队列为空时重置 rear
-        }
-
-        return element;
-    }
-
-    /**
-     * 查看队首元素
-     * 时间复杂度：O(1)
-     */
-    @Override
-    public E peek() {
-        if (isEmpty()) {
-            throw new NoSuchElementException("Queue is empty");
-        }
-        return front.element;
-    }
-
-    @Override
-    public boolean isEmpty() {
-        return front == null;
-    }
-
-    @Override
-    public int size() {
-        return size;
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("LinkedQueue: [");
-        Node current = front;
-        while (current != null) {
-            sb.append(current.element);
-            if (current.next != null) sb.append(", ");
-            current = current.next;
-        }
-        sb.append("] (front -> rear)");
-        return sb.toString();
-    }
-}
-```
-
-### 3.5 双端队列（Deque）
-
-```java
-/**
- * 双端队列：可以在两端进行插入和删除
- */
-public class Deque<E> {
-    private final LinkedList<E> list = new LinkedList<>();
-
-    /**
-     * 从头部插入
-     */
-    public void addFirst(E element) {
-        list.add(0, element);
-    }
-
-    /**
-     * 从尾部插入
-     */
-    public void addLast(E element) {
-        list.add(element);
-    }
-
-    /**
-     * 从头部删除
-     */
-    public E removeFirst() {
-        if (isEmpty()) throw new NoSuchElementException();
-        return list.remove(0);
-    }
-
-    /**
-     * 从尾部删除
-     */
-    public E removeLast() {
-        if (isEmpty()) throw new NoSuchElementException();
-        return list.remove(size() - 1);
-    }
-
-    /**
-     * 查看头部元素
-     */
-    public E getFirst() {
-        if (isEmpty()) throw new NoSuchElementException();
-        return list.get(0);
-    }
-
-    /**
-     * 查看尾部元素
-     */
-    public E getLast() {
-        if (isEmpty()) throw new NoSuchElementException();
-        return list.get(size() - 1);
-    }
-
-    public boolean isEmpty() {
-        return list.isEmpty();
-    }
-
-    public int size() {
-        return list.size();
-    }
-}
-```
-
-### 3.6 队列的应用
-
-```mermaid
-graph TD
-    A["队列的应用场景"] --> B["任务调度"]
-    A --> C["生产者-消费者"]
-    A --> D["广度优先搜索"]
-    A --> E["缓冲"]
-
-    B --> B1["操作系统进程调度"]
-    B --> B2["线程池任务队列"]
-
-    C --> C1["线程间通信"]
-    C --> C2["消息队列"]
-
-    D --> BFS["BFS 遍历图/树"]
-    D --> E1["最短路径（无权图）"]
-
-    E --> E2["I/O 缓冲"]
-    E3["打印队列"]
-```
+| 操作 | 单链表 | 双向链表 |
+|------|--------|---------|
+| 搜索 LIST-SEARCH | Θ(n) | Θ(n) |
+| 插入（已知位置） | Θ(1) | Θ(1) |
+| 删除（已知节点） | Θ(n)（找前驱） | **Θ(1)** |
 
 ---
 
-## 四、链表
+## 三、表示有根树（§10.3）
 
-### 4.1 链表的定义
+### 3.1 二叉树
 
-**链表**是一种线性数据结构，通过指针将一系列节点连接起来。
+每个节点三个指针：`p`（父）、`left`（左孩子）、`right`（右孩子）；树用 `T.root` 指向根，`T.root == NIL` 表示空树。这是第 12 章 BST、第 13 章红黑树的标准表示。
 
-```mermaid
-graph TD
-    subgraph SinglyLinkedList
-    Head["head"] --> N1["data1 | next"] --> N2["data2 | next"] --> N3["data3 | next"] --> NullNode["null"]
-    end
+### 3.2 任意分支：左孩子右兄弟（LCRS）
 
-    subgraph DoublyLinkedList
-    DHead["head"] --> DN1["prev | data1 | next"] --> DN2["prev | data2 | next"] --> DN3["prev | data3 | next"] --> DNullNode["null"]
-    end
-
-    style Head fill:#9f9,stroke:#333
-    style DHead fill:#9f9,stroke:#333
-```
-
-### 4.2 单链表实现
-
-```java
-/**
- * 单链表实现
- */
-public class LinkedList<E> {
-    private Node head;  // 头节点
-    private int size;   // 元素个数
-
-    private class Node {
-        E element;
-        Node next;
-
-        Node(E element) {
-            this.element = element;
-        }
-    }
-
-    public LinkedList() {
-        this.head = null;
-        this.size = 0;
-    }
-
-    /**
-     * 在链表头部插入
-     * 时间复杂度：O(1)
-     */
-    public void addFirst(E element) {
-        Node newNode = new Node(element);
-        newNode.next = head;
-        head = newNode;
-        size++;
-    }
-
-    /**
-     * 在链表尾部插入
-     * 时间复杂度：O(n)
-     */
-    public void addLast(E element) {
-        Node newNode = new Node(element);
-        if (head == null) {
-            head = newNode;
-        } else {
-            Node current = head;
-            while (current.next != null) {
-                current = current.next;
-            }
-            current.next = newNode;
-        }
-        size++;
-    }
-
-    /**
-     * 在指定位置插入
-     * 时间复杂度：O(n)
-     */
-    public void add(int index, E element) {
-        if (index < 0 || index > size) {
-            throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
-        }
-
-        if (index == 0) {
-            addFirst(element);
-            return;
-        }
-
-        Node prev = getNode(index - 1);
-        Node newNode = new Node(element);
-        newNode.next = prev.next;
-        prev.next = newNode;
-        size++;
-    }
-
-    /**
-     * 删除头部元素
-     * 时间复杂度：O(1)
-     */
-    public E removeFirst() {
-        if (head == null) {
-            throw new IndexOutOfBoundsException("List is empty");
-        }
-        E element = head.element;
-        head = head.next;
-        size--;
-        return element;
-    }
-
-    /**
-     * 删除指定位置的元素
-     * 时间复杂度：O(n)
-     */
-    public E remove(int index) {
-        if (index < 0 || index >= size) {
-            throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
-        }
-
-        if (index == 0) {
-            return removeFirst();
-        }
-
-        Node prev = getNode(index - 1);
-        Node toRemove = prev.next;
-        prev.next = toRemove.next;
-        size--;
-        return toRemove.element;
-    }
-
-    /**
-     * 获取元素
-     * 时间复杂度：O(n)
-     */
-    public E get(int index) {
-        return getNode(index).element;
-    }
-
-    /**
-     * 获取节点（辅助方法）
-     */
-    private Node getNode(int index) {
-        if (index < 0 || index >= size) {
-            throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
-        }
-
-        Node current = head;
-        for (int i = 0; i < index; i++) {
-            current = current.next;
-        }
-        return current;
-    }
-
-    /**
-     * 查找元素索引
-     * 时间复杂度：O(n)
-     */
-    public int indexOf(E element) {
-        Node current = head;
-        int index = 0;
-        while (current != null) {
-            if (element == null ? current.element == null :
-                element.equals(current.element)) {
-                return index;
-            }
-            current = current.next;
-            index++;
-        }
-        return -1;
-    }
-
-    public boolean isEmpty() {
-        return head == null;
-    }
-
-    public int size() {
-        return size;
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("[");
-        Node current = head;
-        while (current != null) {
-            sb.append(current.element);
-            if (current.next != null) sb.append(", ");
-            current = current.next;
-        }
-        sb.append("]");
-        return sb.toString();
-    }
-}
-```
-
-### 4.3 双链表实现
-
-```java
-/**
- * 双链表实现
- * 支持双向遍历
- */
-public class DoublyLinkedList<E> {
-    private Node head;  // 头节点
-    private Node tail;  // 尾节点
-    private int size;
-
-    private class Node {
-        E element;
-        Node prev;
-        Node next;
-
-        Node(E element) {
-            this.element = element;
-        }
-    }
-
-    public DoublyLinkedList() {
-        this.head = null;
-        this.tail = null;
-        this.size = 0;
-    }
-
-    /**
-     * 在头部插入
-     */
-    public void addFirst(E element) {
-        Node newNode = new Node(element);
-        if (isEmpty()) {
-            head = newNode;
-            tail = newNode;
-        } else {
-            newNode.next = head;
-            head.prev = newNode;
-            head = newNode;
-        }
-        size++;
-    }
-
-    /**
-     * 在尾部插入
-     */
-    public void addLast(E element) {
-        Node newNode = new Node(element);
-        if (isEmpty()) {
-            head = newNode;
-            tail = newNode;
-        } else {
-            newNode.prev = tail;
-            tail.next = newNode;
-            tail = newNode;
-        }
-        size++;
-    }
-
-    /**
-     * 在指定位置插入
-     */
-    public void add(int index, E element) {
-        if (index < 0 || index > size) {
-            throw new IndexOutOfBoundsException();
-        }
-
-        if (index == 0) {
-            addFirst(element);
-        } else if (index == size) {
-            addLast(element);
-        } else {
-            Node after = getNode(index);
-            Node before = after.prev;
-            Node newNode = new Node(element);
-
-            newNode.next = after;
-            newNode.prev = before;
-            before.next = newNode;
-            after.prev = newNode;
-            size++;
-        }
-    }
-
-    /**
-     * 删除头部
-     */
-    public E removeFirst() {
-        if (isEmpty()) throw new IndexOutOfBoundsException();
-        E element = head.element;
-        head = head.next;
-        if (head != null) {
-            head.prev = null;
-        } else {
-            tail = null;
-        }
-        size--;
-        return element;
-    }
-
-    /**
-     * 删除尾部
-     */
-    public E removeLast() {
-        if (isEmpty()) throw new IndexOutOfBoundsException();
-        E element = tail.element;
-        tail = tail.prev;
-        if (tail != null) {
-            tail.next = null;
-        } else {
-            head = null;
-        }
-        size--;
-        return element;
-    }
-
-    /**
-     * 删除指定位置的元素
-     */
-    public E remove(int index) {
-        if (index < 0 || index >= size) {
-            throw new IndexOutOfBoundsException();
-        }
-
-        if (index == 0) return removeFirst();
-        if (index == size - 1) return removeLast();
-
-        Node toRemove = getNode(index);
-        Node before = toRemove.prev;
-        Node after = toRemove.next;
-
-        before.next = after;
-        after.prev = before;
-        size--;
-
-        return toRemove.element;
-    }
-
-    /**
-     * 获取节点
-     */
-    private Node getNode(int index) {
-        if (index < size / 2) {
-            // 从前往后找
-            Node current = head;
-            for (int i = 0; i < index; i++) {
-                current = current.next;
-            }
-            return current;
-        } else {
-            // 从后往前找
-            Node current = tail;
-            for (int i = size - 1; i > index; i--) {
-                current = current.prev;
-            }
-            return current;
-        }
-    }
-
-    public boolean isEmpty() {
-        return head == null;
-    }
-
-    public int size() {
-        return size;
-    }
-}
-```
-
-### 4.4 链表 vs 数组
-
-| 操作 | 链表 | 数组 |
-|-----|------|------|
-| 随机访问 | O(n) | O(1) |
-| 头部插入/删除 | O(1) | O(n) |
-| 尾部插入/删除 | O(n)/O(1)* | O(1) |
-| 中间插入/删除 | O(n) | O(n) |
-| 空间开销 | O(n) 指针 | O(1) |
-
-*带尾指针的链表可以实现 O(1) 尾部插入
-
-```mermaid
-graph TD
-    A["链表 vs 数组选择"] --> B["选择链表"]
-    A --> C["选择数组"]
-
-    B --> B1["频繁插入删除头部"]
-    B --> B2["大小不确定"]
-    B --> B3["不需要随机访问"]
-
-    C --> C1["需要随机访问"]
-    C --> C2["内存局部性重要"]
-    C --> C3["空间有限"]
-
-    style A fill:#ff9,stroke:#333
-```
-
----
-
-## 五、总结与要点
-
-### 5.1 核心概念回顾
-
-```mermaid
-flowchart TD
-    A["第十章核心"] --> B["栈 Stack"]
-    A --> C["队列 Queue"]
-    A --> D["链表 Linked List"]
-
-    B --> B1["LIFO 后进先出"]
-    B --> B2["push/pop/peek"]
-    B --> B3["数组或链表实现"
-
-    C --> C1["FIFO 先进先出"]
-    C --> C2["enqueue/dequeue"]
-    C --> C3["循环队列/链表队列"
-
-    D --> D1["节点 + 指针"]
-    D --> D2["单链表/双链表"]
-    D --> D3["动态大小"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 5.2 操作复杂度总结
-
-| 数据结构 | push | pop | peek | enqueue | dequeue |
-|---------|------|-----|------|---------|---------|
-| 栈（数组） | O(1)* | O(1) | O(1) | - | - |
-| 栈（链表） | O(1) | O(1) | O(1) | - | - |
-| 队列（循环） | O(1) | - | O(1) | O(1) | O(1) |
-| 队列（链表） | O(1) | - | O(1) | O(1) | O(1) |
-| 链表头部 | O(1) | O(1) | - | - | - |
-| 链表尾部 | O(n) | - | - | O(n)** | - |
-
-*均摊分析
-**带尾指针可优化为 O(1)
-
-### 5.3 应用场景总结
+孩子数不固定时，给每个节点 k 个孩子指针（`child₁..childₖ`）既浪费（多数节点孩子少）又限死上限。**左孩子右兄弟表示（left-child, right-sibling）**只用两个指针表示任意多孩子：
 
 ```
-栈的应用：
-├── 函数调用栈
-├── 表达式求值
-├── 括号匹配
-└── 浏览器历史
-
-队列的应用：
-├── 任务调度
-├── BFS 遍历
-├── 消息队列
-└── 缓冲器
+每个节点 x：
+  x.p            父指针
+  x.left-child   指向 x 的最左孩子
+  x.right-sibling 指向 x 的紧右兄弟
 ```
-
----
-
-## 六、LeetCode 练习题
-
-### 6.1 栈相关题目
-
-**题目 1：用栈实现队列**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [232. 用栈实现队列](https://leetcode.cn/problems/implement-queue-using-stacks/) |
-| 难度 | 简单 |
-| 核心思路 | 使用两个栈，一个用于入队，一个用于出队 |
-
-```mermaid
-flowchart TD
-    A["用栈实现队列"] --> B["输入栈 inStack"]
-    A --> C["输出栈 outStack"]
-
-    B --> B1["push 时放入 inStack"]
-    C --> C1["pop 时从 outStack 取"]
-
-    B1 --> D["outStack 为空时"]
-    D --> E["将 inStack 全部倒入 outStack"]
-    E --> C
-
-    style A fill:#ff9,stroke:#333
-```
-
-**题目 2：最小栈**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [155. 最小栈](https://leetcode.cn/problems/min-stack/) |
-| 难度 | 简单 |
-| 核心思路 | 辅助栈同步存储当前最小值 |
-
-```mermaid
-flowchart TD
-    A["MinStack 设计"] --> B["主栈 dataStack"]
-    A --> C["辅助栈 minStack"]
-
-    B --> B1["push: 数据入 dataStack"]
-    C --> C1["push: minStack 推入当前最小值"]
-
-    B --> D["pop: 两栈同步弹出"]
-    D --> E["peek: 正常访问"]
-
-    C --> F["getMin: 返回 minStack 栈顶"]
-
-    style A fill:#ff9,stroke:#333
-    style C fill:#9f9,stroke:#333
-```
-
-### 6.2 队列相关题目
-
-**题目 3：设计循环队列**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [622. 设计循环队列](https://leetcode.cn/problems/design-circular-queue/) |
-| 难度 | 中等 |
-| 核心思路 | 使用固定大小数组，通过模运算实现循环 |
-
-```mermaid
-flowchart TD
-    A["循环队列"] --> B["front 指向队首"]
-    A --> C["rear 指向队尾下一个位置"]
-
-    B --> B1["空: front == rear 且 size == 0"]
-    C --> C1["满: front == rear 且 size > 0"]
-
-    A --> D["入队: rear = (rear + 1) % capacity"]
-    D --> E["出队: front = (front + 1) % capacity"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 6.3 链表相关题目
-
-**题目 4：删除链表中的节点**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [237. 删除链表中的节点](https://leetcode.cn/problems/delete-node-in-a-linked-list/) |
-| 难度 | 简单 |
-| 核心思路 | 将下一个节点的值复制到当前节点，然后删除下一个节点 |
-
-```mermaid
-flowchart TD
-    A["删除 node"] --> B["node.val = node.next.val"]
-    B --> C["node.next = node.next.next"]
-
-    note["注意：无法删除尾节点（需要前驱）"]
-
-    style A fill:#ff9,stroke:#333
-    style note fill:#f99,stroke:#333
-```
-
-**题目 5：两数相加**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [2. 两数相加](https://leetcode.cn/problems/add-two-numbers/) |
-| 难度 | 中等 |
-| 核心思路 | 逆序存储的数字链表，逐位相加处理进位 |
 
 ```mermaid
 flowchart LR
-    subgraph Input
-    L1["2 -> 4 -> 3"]
-    L2["5 -> 6 -> 4"]
+    subgraph 树["普通树"]
+        R((R)) --> A((A))
+        R --> B((B))
+        R --> C((C))
+        A --> A1((A1))
+        A --> A2((A2))
+    end
+    subgraph LCRS["左孩子右兄弟表示"]
+        R2((R)) -->|"left-child"| A3((A))
+        A3 -->|"right-sibling"| B3((B))
+        B3 -->|"right-sibling"| C3((C))
+        A3 -->|"left-child"| A1b((A1))
+        A1b -->|"right-sibling"| A2b((A2))
     end
 
-    L1 -->|"加法 + 进位"| Result["7 -> 0 -> 8"]
-
-    style Result fill:#9f9,stroke:#333
+    classDef rt fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef n  fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    class R,R2 rt
 ```
 
-### 6.4 进阶题目
+**空间 Θ(n)**（每个节点恒定 3 个指针），无论分支多广。代价：访问第 i 个孩子要沿 right-sibling 走 i 步。
 
-**题目 6：滑动窗口最大值**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [239. 滑动窗口最大值](https://leetcode.cn/problems/sliding-window-maximum/) |
-| 难度 | 困难 |
-| 核心思路 | 单调递减队列 + 滑动窗口 |
-
-```mermaid
-flowchart TD
-    A["滑动窗口最大值"] --> B["单调队列 deque"]
-
-    B --> B1["保持递减顺序"]
-    B --> B2["队首是当前最大值"]
-    B --> C["窗口滑动时"]
-
-    C --> D["移除超出窗口的元素"]
-    D --> E["加入新元素（删除小于它的）"]
-    E --> F["队首就是最大值"]
-
-    style A fill:#ff9,stroke:#333
-    style B fill:#9f9,stroke:#333
-```
-
-### 6.5 练习建议
-
-| 阶段 | 推荐题目 | 知识点 |
-|-----|---------|--------|
-| 入门 | 232, 155, 237 | 栈、队列、链表基础操作 |
-| 进阶 | 622, 2 | 循环队列、链表遍历 |
-| 挑战 | 239 | 单调队列综合应用 |
+> **其他表示**：堆用**数组**（完全二叉树，第 6 章）；不相交集合只存**父指针**（向根遍历即可，第 19 章）。选哪种取决于操作模式。
 
 ---
 
-*本章精读笔记完成*
+## 四、代码实现（Java + Python）
+
+克制的最小实现：数组栈、双向链表（带哨兵）、LCRS 树。对应 CLRS 伪代码，0-indexed。
+
+### Java
+
+```java
+import java.util.*;
+// 数组栈（对应 §10.1 伪代码）
+class ArrayStack<E> {
+    private Object[] a = new Object[8];
+    private int top = 0;                       // 元素数；a[0..top)
+    public void push(E x) {
+        if (top == a.length) a = Arrays.copyOf(a, a.length * 2);
+        a[top++] = x;
+    }
+    @SuppressWarnings("unchecked")
+    public E pop() {
+        if (top == 0) throw new NoSuchElementException();
+        E x = (E) a[--top]; a[top] = null; return x;
+    }
+    public boolean isEmpty() { return top == 0; }
+}
+
+// 双向链表（带哨兵 sentinel，对应 §10.2 伪代码）
+class LinkedList<E> {
+    private static class Node<E> { E key; Node<E> prev, next; Node(E k){key=k;} }
+    private final Node<E> nil = new Node<>(null);   // 哨兵
+    private int size = 0;
+    public LinkedList() { nil.prev = nil.next = nil; }
+
+    public void insert(E key) {                  // 头插
+        Node<E> x = new Node<>(key);
+        x.next = nil.next;  nil.next.prev = x;
+        nil.next = x;       x.prev = nil;
+        size++;
+    }
+    public Node<E> search(E key) {
+        Node<E> x = nil.next;
+        while (x != nil && !Objects.equals(x.key, key)) x = x.next;
+        return x == nil ? null : x;
+    }
+    public boolean delete(E key) {
+        Node<E> x = search(key);
+        if (x == null) return false;
+        x.prev.next = x.next;  x.next.prev = x.prev;   // 哨兵让此处无需特判
+        size--; return true;
+    }
+    public List<E> toList() {
+        List<E> out = new ArrayList<>();
+        for (Node<E> x = nil.next; x != nil; x = x.next) out.add(x.key);
+        return out;
+    }
+}
+
+// 左孩子右兄弟树（§10.3 LCRS）
+class RootedTree {
+    static class Node {
+        int key; Node p, leftChild, rightSibling;
+        Node(int k){key=k;}
+    }
+    Node root;
+    // 添加 child 作为 parent 的孩子（parent 为 null 表示建根）
+    Node addChild(Node parent, int key) {
+        Node c = new Node(key); c.p = parent;
+        if (parent == null) { root = c; return c; }
+        c.rightSibling = parent.leftChild;          // 头插到兄弟链
+        parent.leftChild = c;
+        return c;
+    }
+    // 先序遍历
+    void preOrder(Node x, List<Integer> out) {
+        if (x == null) return;
+        out.add(x.key);
+        for (Node c = x.leftChild; c != null; c = c.rightSibling) preOrder(c, out);
+    }
+}
+
+public class Elementary {
+    public static void main(String[] args) {
+        ArrayStack<Integer> s = new ArrayStack<>();
+        for (int i : new int[]{1,2,3}) s.push(i);
+        System.out.print("栈 pop: ");
+        while (!s.isEmpty()) System.out.print(s.pop() + " ");   // 3 2 1
+
+        LinkedList<String> L = new LinkedList<>();
+        L.insert("a"); L.insert("b"); L.insert("c");
+        L.delete("b");
+        System.out.println("\n链表: " + L.toList());             // [c, a]
+
+        RootedTree t = new RootedTree();
+        RootedTree.Node r = t.addChild(null, 1);
+        t.addChild(r, 2); t.addChild(r, 3);
+        List<Integer> out = new ArrayList<>(); t.preOrder(t.root, out);
+        System.out.println("LCRS 先序: " + out);                 // [1, 3, 2]（头插）
+    }
+}
+```
+
+### Python
+
+```python
+class ArrayStack:
+    def __init__(self): self._a = []
+    def push(self, x): self._a.append(x)
+    def pop(self):
+        if not self._a: raise IndexError("underflow")
+        return self._a.pop()
+    def is_empty(self): return not self._a
+
+
+class LinkedList:
+    """双向链表，带哨兵 nil（对应 §10.2 伪代码）。"""
+    class _Node:
+        __slots__ = ("key", "prev", "next")
+        def __init__(self, key): self.key = key
+    def __init__(self):
+        self.nil = self._Node(None); self.nil.prev = self.nil.next = self.nil
+    def insert(self, key):                       # 头插
+        x = self._Node(key)
+        x.next = self.nil.next;  self.nil.next.prev = x
+        self.nil.next = x;       x.prev = self.nil
+    def _search(self, key):
+        x = self.nil.next
+        while x is not self.nil and x.key != key: x = x.next
+        return None if x is self.nil else x
+    def delete(self, key):
+        x = self._search(key)
+        if x is None: return False
+        x.prev.next = x.next; x.next.prev = x.prev
+        return True
+    def to_list(self):
+        out, x = [], self.nil.next
+        while x is not self.nil: out.append(x.key); x = x.next
+        return out
+
+
+class RootedTree:
+    """左孩子右兄弟表示（§10.3 LCRS）。"""
+    class Node:
+        __slots__ = ("key", "p", "left_child", "right_sibling")
+        def __init__(self, key): self.key = key; self.left_child = self.right_sibling = None
+    def __init__(self): self.root = None
+    def add_child(self, parent, key):
+        c = self.Node(key); c.p = parent
+        if parent is None: self.root = c; return c
+        c.right_sibling = parent.left_child      # 头插到兄弟链
+        parent.left_child = c
+        return c
+    def pre_order(self, x=None, out=None):
+        if out is None: out = []
+        if x is None: x = self.root
+        if x is None: return out
+        out.append(x.key)
+        c = x.left_child
+        while c is not None: self.pre_order(c, out); c = c.right_sibling
+        return out
+
+
+if __name__ == "__main__":
+    s = ArrayStack()
+    for i in (1, 2, 3): s.push(i)
+    print("栈 pop:", [s.pop() for _ in range(3)])          # [3, 2, 1]
+
+    L = LinkedList()
+    for k in ("a", "b", "c"): L.insert(k)
+    L.delete("b")
+    print("链表:", L.to_list())                            # ['c', 'a']
+
+    t = RootedTree()
+    r = t.add_child(None, 1); t.add_child(r, 2); t.add_child(r, 3)
+    print("LCRS 先序:", t.pre_order())                     # [1, 3, 2]
+```
+
+> **验证**：Java/Python 均编译运行通过；链表插入/删除、栈 LIFO、LCRS 遍历均与预期一致。
+
+---
+
+## 五、复杂度速查 + 易混点
+
+### 5.1 速查
+
+| 结构 | 插入 | 删除 | 搜索 | 随机访问 |
+|------|------|------|------|---------|
+| 栈（数组） | Θ(1) 摊还 | Θ(1)（栈顶） | — | — |
+| 队列（环形数组） | Θ(1) | Θ(1)（队首） | — | — |
+| 单链表 | Θ(1) | Θ(n)（找前驱） | Θ(n) | Θ(n) |
+| 双向链表 | Θ(1) | **Θ(1)**（已知节点） | Θ(n) | Θ(n) |
+| 二叉树（三指针） | Θ(1) 建节点 | — | — | — |
+| LCRS 任意树 | Θ(1) | — | — | — |
+
+### 5.2 易混点
+
+- **单链表 vs 双向链表删除**：单链表删 x 必须先找前驱（Θ(n)），双向链表 x 自带 `prev`（Θ(1)）。这是哈希表链地址法常用双向链表的原因（LRU 删除要 O(1)）。
+- **哨兵不是哑节点**：哨兵 `L.nil` 是链表的一部分（构成环），不是「头节点」概念。它让所有边界判断消失，代码更简洁。
+- **队列空/满**：`head == tail` 二义——用 `size` 计数或浪费一格。别想当然认为 `head == tail` 就是空。
+- **LCRS 不是把树转成二叉树**：它是一种**存储映射**，原树的兄弟关系变成 LCRS 的 right-sibling 链、父子关系变成 left-child。遍历语义变了，要配套 LCRS 专属的遍历。
+- **栈 vs 队列只差删除端**：栈删最新（同端），队列删最早（异端）。一个 Θ(1) 数组实现，全靠 top/head/tail 指针。
+
+---
+
+## 六、LeetCode 关联 + 习题 + 思考题
+
+### 6.1 LeetCode 关联
+
+| 题目 | 难度 | 考点 | 用本章什么 |
+|------|------|------|-----------|
+| [155. 最小栈](https://leetcode.cn/problems/min-stack/) | 中 | 辅助栈 | 栈 + 同步维护最小值 |
+| [232. 用栈实现队列](https://leetcode.cn/problems/implement-queue-using-stacks/) | 中 | 双栈 | 习题 10.1-6/7 |
+| [225. 用队列实现栈](https://leetcode.cn/problems/implement-stack-using-queues/) | 中 | 双队列 | 习题 10.1-7 |
+| [622. 设计循环队列](https://leetcode.cn/problems/design-circular-queue/) | 中 | 环形数组 | §10.1 环形队列 |
+| [206. 反转链表](https://leetcode.cn/problems/reverse-linked-list/) | 简 | 指针操作 | 链表基本 |
+| [146. LRU 缓存](https://leetcode.cn/problems/lru-cache/) | 中 | 双向链表 + 哈希 | §10.2 双向链表 O(1) 删除 |
+| [239. 滑动窗口最大值](https://leetcode.cn/problems/sliding-window-maximum/) | 困 | 单调双端队列 | 双端队列 |
+
+### 6.2 习题快问快答（第四版编号）
+
+- **10.1-2**　两个栈共享一个数组 `S[1..n]`，一个从底向上长，一个从顶向下长；溢出当两栈指针相遇。
+- **10.1-5/10.1-5**　给 ENQUEUE/DEQUEUE 补上队列空（下溢）和满（上溢）检查：用 `Q.size` 或浪费一格。
+- **10.1-6**　用**两个栈**实现队列：push 全进 inStack；pop/peek 时若 outStack 空，把 inStack 全倒入 outStack 再取。单次最坏 Θ(n)，但**摊还 Θ(1)**（每个元素最多被搬运两次）。
+- **10.1-7**　用**两个队列**实现栈：pop 时把除最后一个外的元素倒入另一队列，剩下的就是栈顶。
+- **10.2-1**　单链表上的 DELETE 在 Θ(1) 内**无法**完成（需前驱）；但 INSERT/SEARCH 仍 Θ(1)/Θ(n)。
+- **10.2-2**　单链表实现栈：PUSH 头插、POP 删头，均 Θ(1)。
+- **10.2-5**　**有序循环链表**插入：沿表走到合适位置 Θ(n)，插入本身 Θ(1)。
+- **10.2-6**　两个不相交链表的**并集**（UNION）：把其一接在另一尾部 Θ(1)（循环链表）。
+
+### 6.3 思考题要点
+
+- **10-1 各种链表比较**：单/双 × 有/无哨兵，列 INSERT/DELETE/SEARCH/UNION 的复杂度表——双向链表 + 哨兵最通用。
+- **10-2 用链表实现可合并堆**：有序/无序链表做 MIN-HEAP，分析 INSERT/MINIMUM/EXTRACT-MIN/UNION 各操作的复杂度；UNION 在无序链表上 Θ(1)，但 EXTRACT-MIN 退化 Θ(n)。
+- **10-3 搜索有序紧凑链表**：链表用数组下标（游标）表示、且有序，搜索用**概率分析**（类似第 5 章雇佣问题）证明期望搜索时间。
+
+### 章末注记
+
+本章的抽象（动态集合 + 指针）是 CLRS 全书数据结构的脚手架：第 11 章哈希、第 12–13 章搜索树、第 19 章不相交集合、第 20–23 章图的邻接表，都建立在链表与树表示之上。**左孩子右兄弟**这一技巧尤其重要——它把「任意分支树」统一映射成「二叉树」，是后续 LCT、树链剖分等高级结构的基础。

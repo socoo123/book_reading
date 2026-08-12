@@ -1,1161 +1,593 @@
 # 第四章：分治策略
 
-## 一、分治策略概述
-
-### 1.1 什么是分治策略
-
-**分治策略** 是一种经典的算法设计范式，其核心思想是：将原问题**分解**为若干个规模较小的**子问题**，**递归**地解决这些子问题，最后将子问题的解**合并**为原问题的解。
-
-```mermaid
-flowchart TD
-    A["原问题<br/>规模 n"] --> B["分解<br/>分成 k 个子问题"]
-    B --> C["解决子问题<br/>递归求解"]
-    C --> D["合并<br/>组合子问题解"]
-
-    subgraph 分治三步
-    B1["Divide"] --> C1["Conquer"] --> D1["Combine"]
-    end
-
-    style A fill:#ff9,stroke:#333
-    style D fill:#9f9,stroke:#333
-```
-
-### 1.2 分治策略的通用框架
-
-```java
-/**
- * 分治策略通用框架
- */
-public class DivideAndConquer {
-
-    /**
-     * 分治主方法
-     *
-     * @param problem 待解决的问题实例
-     * @return 问题的解
-     */
-    public static Result solve(Problem problem) {
-        // 基准情况：问题足够小，直接求解
-        if (problem.size() <= BASE_SIZE) {
-            return solveSmallProblem(problem);
-        }
-
-        // 第一步：分解 - 将问题分成若干子问题
-        Problem[] subProblems = divide(problem);
-
-        // 第二步：递归解决每个子问题
-        Result[] subResults = new Result[subProblems.length];
-        for (int i = 0; i < subProblems.length; i++) {
-            subResults[i] = solve(subProblems[i]);
-        }
-
-        // 第三步：合并 - 将子问题的解组合成原问题的解
-        return combine(subResults);
-    }
-
-    private static Problem[] divide(Problem problem) {
-        // 子类实现具体的分解逻辑
-        return null;
-    }
-
-    private static Result solveSmallProblem(Problem problem) {
-        // 子类实现基准情况的求解
-        return null;
-    }
-
-    private static Result combine(Result[] results) {
-        // 子类实现合并逻辑
-        return null;
-    }
-}
-```
-
-### 1.3 分治策略的适用条件
-
-```mermaid
-graph TD
-    A["分治策略适用条件"] --> B["子问题与原问题结构相同"]
-    A --> C["子问题可独立求解"]
-    A --> D["子问题规模足够小时可直接求解"]
-    A --> E["子问题解可高效合并"]
-
-    B --> B1["最优子结构性质"]
-    C --> C1["无重叠子问题"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-**三个关键特征**：
-1. **最优子结构**：原问题的最优解包含子问题的最优解
-2. **无重叠子问题**（与动态规划区分）：子问题相互独立
-3. **可合并性**：子问题的解可以组合成原问题的解
+> **本章定位**：分治是算法设计的第一大范式——**归并排序、快速排序、二分查找全是它**。本章讲四件事：分治怎么想、复杂度怎么估（只记结论，不推公式）、五个必会应用（归并排序 / 二分查找 / 快速幂 / 斐波那契 / 最近点对）、配套 LeetCode 题单。
+>
+> 📌 数学克制版：本章只用 `T(n)`、`Θ`、`log` 三个符号。递归式全部以「式子 → 结论」速查表给出，推导过程用递归树**画图直观看**，不做归纳证明。
 
 ---
 
-## 二、分治策略分析
+## 一、分治是什么
 
-### 2.1 递归式表示
+### 1.1 三步走
 
-分治算法的时间复杂度通常用**递归式**表示：
+遇到大问题，**递归**地拆小：
 
-$$T(n) = \begin{cases} \Theta(1) & \text{若 } n \leq c \\ aT(n/b) + D(n) + C(n) & \text{否则} \end{cases}$$
+```mermaid
+flowchart LR
+    A["Divide 分解<br/>拆成若干个<br/>同类型小问题"] --> B["Conquer 解决<br/>递归解决小问题<br/>足够小就直接算"]
+    B --> C["Combine 合并<br/>把小问题的答案<br/>拼成大问题的答案"]
+
+    classDef step fill:#80DEEA,stroke:#0097A7,color:#1f1f1f
+    class A,B,C step
+```
+
+**什么时候能用分治**（三个条件同时满足）：
+1. 子问题和原问题**结构相同**（只是规模变小）；
+2. 子问题之间**互相独立**（各算各的，不共享中间结果——否则该用动态规划，见第五节）；
+3. 子问题的答案**能合并**出原问题的答案。
+
+### 1.2 复杂度怎么估：递归式（只记结论）
+
+分治算法的耗时写成**递归式**：`T(n) = a·T(n/b) + f(n)`
+- `a` = 拆成几个子问题；`n/b` = 每个子问题的规模；`f(n)` = 分解 + 合并本身的代价。
+
+**不用解方程，画递归树一眼看**：以归并排序 `T(n) = 2T(n/2) + n` 为例——
 
 ```mermaid
 graph TD
-    subgraph 递归式含义
-    A["Tn"] --> B["a × Tn/b"]
-    A --> C["+ Dn 分解时间"]
-    A --> D["+ Cn 合并时间"]
-    end
+    r["n（合并 n 个元素）"] --> l1["n/2"] & r1["n/2"]
+    l1 --> q1["n/4"] & q2["n/4"]
+    r1 --> q3["n/4"] & q4["n/4"]
+    q1 -.-> dots["… 直到每份只剩 1 个"]
 
-    A --> E["总共 a 个子问题"]
-    E --> F["每个规模 n/b"]
-    F --> G["分解 + 递归 + 合并"]
+    r -.- s0["第 0 层合计：n"]
+    l1 -.- s1["第 1 层合计：n"]
+    q1 -.- s2["第 2 层合计：n"]
+    dots -.- s3["共 log n 层"]
+
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef node fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    classDef sum fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    class r root
+    class l1,r1,q1,q2,q3,q4,dots node
+    class s0,s1,s2,s3 sum
 ```
 
-### 2.2 递归树分析方法
+**每层加起来都是 n，共 log n 层 → 总代价 n·log n**。这就是 Θ(n log n) 的全部直觉。
 
-```mermaid
-graph TD
-    subgraph 递归树结构
-    Root["T(n)<br/>规模 n"] --> Level1["a × T(n/b)<br/>a 个节点"]
-    Level1 --> Level2["a² × T(n/b²)<br/>a² 个节点"]
-    Level2 --> Level3["..."]
-    Level3 --> Leaf["a的logb(n) × T1<br/>叶子节点"]
-    end
+### 1.3 主定理速查表（背这三行就够）
 
-    style Root fill:#ff9,stroke:#333
-    style Leaf fill:#9f9,stroke:#333
-```
+> 对 `T(n) = a·T(n/b) + f(n)`，比较「每层代价」随层数的变化：
 
-**递归树的三层**：
+| 每层代价 | 规律 | 总复杂度 | 例子 |
+|---------|------|---------|------|
+| **逐层几何增长** | 叶子（最底层）占大头 | $\Theta(n^{\log_b a})$ | 8 分矩阵乘法 $8T(n/2)+1 \to \Theta(n^3)$ |
+| **每层都一样** | 单层 × 层数 | $\Theta(n^{\log_b a}\cdot\log n)$ | 归并 $2T(n/2)+n \to \Theta(n\log n)$ |
+| **逐层几何缩小** | 根（第一层）占大头 | $\Theta(f(n))$ | $2T(n/2)+n^2 \to \Theta(n^2)$ |
 
-| 层级 | 节点数 | 单个节点工作量 | 总工作量 |
-|-----|-------|-------------|---------|
-| 根 | 1 | $D(n) + C(n)$ | $D(n) + C(n)$ |
-| 第1层 | a | $D(n/b) + C(n/b)$ | $a \cdot [D(n/b) + C(n/b)]$ |
-| 第2层 | a² | $D(n/b²) + C(n/b²)$ | $a² \cdot [D(n/b²) + C(n/b²)] |
-| ... | ... | ... | ... |
-| 叶子 | $a^{\log_b n} = n^{\log_b a}$ | $\Theta(1)$ | $\Theta(n^{\log_b a})$ |
+速查口诀：**「谁贵听谁的」**——叶子贵 → 看叶子数；每层平摊 → 乘层数；根贵 → 就是 f(n)。
 
-### 2.3 主定理回顾
+### 1.4 常见递归式速查
 
-```mermaid
-flowchart TD
-    A["主定理：Tn = aTn/b + fn"] --> B{"fn 与 n的logb(a)比较?"}
-
-    B -->|fn 更小<br/>fn = On的logb(a)-ε| C["情况1<br/>T = Θn的logb(a)"]
-    B -->|fn 相同<br/>fn = Θn的logb(a)"| D["情况2<br/>T = Θn的logb(a)logn"]
-    B -->|fn 更大<br/>fn = Ωn的logb(a)+ε"| E["情况3<br/>T = Θfn"]
-
-    C --> F["如：a=9, b=3<br/>fn = n的1.5次方"]
-    D --> G["如：a=2, b=2<br/>fn = n"]
-    E --> H["如：a=1, b=2<br/>fn = n²"]
-
-    style A fill:#ff9,stroke:#333
-    style C fill:#9ff,stroke:#333
-    style D fill:#9ff,stroke:#333
-    style E fill:#9ff,stroke:#333
-```
+| 递归式 | 复杂度 | 对应算法 |
+|--------|--------|---------|
+| $T(n)=2T(n/2)+\Theta(n)$ | $\Theta(n\log n)$ | 归并排序 |
+| $T(n)=T(n/2)+\Theta(1)$ | $\Theta(\log n)$ | 二分查找 |
+| $T(n)=2T(n/2)+\Theta(1)$ | $\Theta(n)$ | 求数组最大值（分治版） |
+| $T(n)=T(n/2)+\Theta(n)$ | $\Theta(n)$ | 几何级数 $n+n/2+\ldots$ |
+| $T(n)=2T(n-1)+\Theta(1)$ | $\Theta(2^n)$ | 汉诺塔（指数爆炸） |
+| $T(n)=T(n-1)+\Theta(n)$ | $\Theta(n^2)$ | 快排最坏情况（第 7 章） |
+| $T(n)=T(n/3)+T(2n/3)+\Theta(n)$ | $\Theta(n\log n)$ | 不平衡划分（如快排平均） |
 
 ---
 
-## 三、归并排序深入分析
+## 二、归并排序：分治的标准模板
 
-### 3.1 归并排序完整实现
+> LeetCode：[912 排序数组](https://leetcode.cn/problems/sort-an-array/)（中等）、[148 排序链表](https://leetcode.cn/problems/sort-list/)（中等）、[23 合并 K 个升序链表](https://leetcode.cn/problems/merge-k-sorted-lists/)（困难）、[剑指 Offer 51 逆序对](https://leetcode.cn/problems/shu-zu-zhong-de-ni-xu-dui-lcof/)（困难）
+
+### 2.1 直觉
+
+**拆到只有一个元素（天然有序），再两两合并成有序数组**。分解 trivial，功夫全在合并（merge）上。
+
+### 2.2 分解与合并示意图
+
+以 `[38, 27, 43, 3, 9, 82, 10]` 为例：
+
+```mermaid
+graph TD
+    A["38 27 43 3 9 82 10"] --> B["38 27 43 3"] & C["9 82 10"]
+    B --> D["38 27"] & E["43 3"]
+    C --> F["9 82"] & G["10"]
+    D --> H["38"] & I["27"]
+    E --> J["43"] & K["3"]
+    F --> L["9"] & M["82"]
+
+    H -.->|"合并"| D2["27 38"]
+    I -.->|"合并"| D2
+    J -.->|"合并"| E2["3 43"]
+    K -.->|"合并"| E2
+    L -.->|"合并"| F2["9 82"]
+    M -.->|"合并"| F2
+    D2 -.->|"合并"| B2["3 27 38 43"]
+    E2 -.->|"合并"| B2
+    F2 -.->|"合并"| C2["9 10 82"]
+    G -.->|"保留"| C2
+    B2 -.->|"合并"| A2["3 9 10 27 38 43 82"]
+    C2 -.->|"合并"| A2
+
+    classDef split fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    classDef leaf fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef merged fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    class A,B,C,D,E,F split
+    class H,I,J,K,L,M,G leaf
+    class D2,E2,F2,B2,C2,A2 merged
+```
+
+**合并两个有序数组**（merge）用双指针，各扫一遍，$\Theta(n)$。一次 `[3, 27, 38, 43]` 和 `[9, 10, 82]` 的合并 trace：
+
+| 步骤 | 比较 | 取出 | 结果数组 |
+|------|------|------|---------|
+| 1 | 3 vs 9 | **3** | 3 |
+| 2 | 27 vs 9 | **9** | 3 9 |
+| 3 | 27 vs 10 | **10** | 3 9 10 |
+| 4 | 27 vs 82 | **27** | 3 9 10 27 |
+| 5 | 38 vs 82 | **38** | 3 9 10 27 38 |
+| 6 | 43 vs 82 | **43** | 3 9 10 27 38 43 |
+| 7 | 右半剩 82 | **82** | 3 9 10 27 38 43 82 |
+
+### 2.3 代码（0-indexed）
+
+**Java**：
 
 ```java
 import java.util.Arrays;
 
-/**
- * 归并排序实现
- */
 public class MergeSort {
-
-    /**
-     * 归并排序主方法
-     *
-     * @param arr 待排序数组
-     * @param left 左边界（包含）
-     * @param right 右边界（包含）
-     */
     public static void mergeSort(int[] arr, int left, int right) {
-        // 基准情况：只有一个元素或空数组
-        if (left >= right) {
-            return;
-        }
-
-        // 第一步：分解 - 计算中点
-        int mid = left + (right - left) / 2;
-
-        // 第二步：递归解决子问题
-        mergeSort(arr, left, mid);       // 排序左半部分
-        mergeSort(arr, mid + 1, right);  // 排序右半部分
-
-        // 第三步：合并两个有序子数组
-        merge(arr, left, mid, right);
+        if (left >= right) return;                    // 只剩一个元素，天然有序
+        int mid = left + (right - left) / 2;          // Divide
+        mergeSort(arr, left, mid);                    // Conquer 左半
+        mergeSort(arr, mid + 1, right);               // Conquer 右半
+        merge(arr, left, mid, right);                 // Combine
     }
 
-    /**
-     * 合并两个有序子数组 arr[left..mid] 和 arr[mid+1..right]
-     */
     private static void merge(int[] arr, int left, int mid, int right) {
-        // 创建临时数组
-        int[] leftArray = Arrays.copyOfRange(arr, left, mid + 1);
-        int[] rightArray = Arrays.copyOfRange(arr, mid + 1, right + 1);
-
-        // 合并过程
-        int i = 0, j = 0, k = left;
-        while (i < leftArray.length && j < rightArray.length) {
-            if (leftArray[i] <= rightArray[j]) {
-                arr[k++] = leftArray[i++];
-            } else {
-                arr[k++] = rightArray[j++];
-            }
-        }
-
-        // 处理剩余元素
-        while (i < leftArray.length) {
-            arr[k++] = leftArray[i++];
-        }
-        while (j < rightArray.length) {
-            arr[k++] = rightArray[j++];
-        }
-    }
-
-    /**
-     * 归并排序复杂度分析版
-     */
-    public static class WithAnalysis {
-
-        private static int mergeCount = 0;
-        private static int compareCount = 0;
-
-        public static void mergeSort(int[] arr, int left, int right) {
-            if (left >= right) return;
-
-            int mid = left + (right - left) / 2;
-            mergeSort(arr, left, mid);
-            mergeSort(arr, mid + 1, right);
-            mergeWithAnalysis(arr, left, mid, right);
-        }
-
-        private static void mergeWithAnalysis(int[] arr, int left, int mid, int right) {
-            mergeCount++;
-            int[] leftArray = Arrays.copyOfRange(arr, left, mid + 1);
-            int[] rightArray = Arrays.copyOfRange(arr, mid + 1, right + 1);
-
-            int i = 0, j = 0, k = left;
-            while (i < leftArray.length && j < rightArray.length) {
-                compareCount++;
-                if (leftArray[i] <= rightArray[j]) {
-                    arr[k++] = leftArray[i++];
-                } else {
-                    arr[k++] = rightArray[j++];
-                }
-            }
-            while (i < leftArray.length) arr[k++] = leftArray[i++];
-            while (j < rightArray.length) arr[k++] = rightArray[j++];
-        }
-
-        public static void printAnalysis(int n) {
-            System.out.println("归并排序分析 (n = " + n + ")");
-            System.out.println("合并次数: " + mergeCount + " = log₂" + n + " ≈ " + Math.log(n) / Math.log(2));
-            System.out.println("总比较次数: " + compareCount);
-        }
+        int[] tmp = new int[right - left + 1];        // 临时数组
+        int i = left, j = mid + 1, k = 0;
+        while (i <= mid && j <= right)                // 双指针取较小者
+            tmp[k++] = arr[i] <= arr[j] ? arr[i++] : arr[j++];
+        while (i <= mid) tmp[k++] = arr[i++];         // 左半剩余
+        while (j <= right) tmp[k++] = arr[j++];       // 右半剩余
+        System.arraycopy(tmp, 0, arr, left, tmp.length);
     }
 
     public static void main(String[] args) {
         int[] arr = {38, 27, 43, 3, 9, 82, 10};
-        System.out.println("排序前: " + Arrays.toString(arr));
-
         mergeSort(arr, 0, arr.length - 1);
-        System.out.println("排序后: " + Arrays.toString(arr));
+        System.out.println(Arrays.toString(arr));     // [3, 9, 10, 27, 38, 43, 82]
     }
 }
 ```
 
-### 3.2 递归树详细分析
+**Python**：
 
-```mermaid
-graph TD
-    subgraph 归并排序递归树
-    Level0["T(n)<br/>全部 n 个元素"] --> Level1a["T(n/2)"] & Level1b["T(n/2)"]
-    Level1a --> Level2a1["T(n/4)"] & Level2a2["T(n/4)"]
-    Level1b --> Level2b1["T(n/4)"] & Level2b2["T(n/4)"]
+```python
+def merge_sort(arr):
+    if len(arr) <= 1:
+        return arr
+    mid = len(arr) // 2
+    left, right = merge_sort(arr[:mid]), merge_sort(arr[mid:])
+    return merge(left, right)
 
-    Level2a1 --> Leaf1["T(1)"]
-    Level2a2 --> Leaf2["T(1)"]
-    Level2b1 --> Leaf3["T(1)"]
-    Level2b2 --> Leaf4["T(1)"]
+def merge(left, right):
+    res, i, j = [], 0, 0
+    while i < len(left) and j < len(right):
+        if left[i] <= right[j]:
+            res.append(left[i]); i += 1
+        else:
+            res.append(right[j]); j += 1
+    return res + left[i:] + right[j:]
 
-    Note1["每层总工作量: n"] -.-> Level0
-    Note2["总层数: log₂n"] -.-> Leaf1
-    end
-
-    style Level0 fill:#ff9,stroke:#333
-    style Leaf1 fill:#9f9,stroke:#333
+if __name__ == "__main__":
+    print(merge_sort([38, 27, 43, 3, 9, 82, 10]))  # [3, 9, 10, 27, 38, 43, 82]
 ```
 
-**递归式推导**：
-```
-Tn = 2Tn/2 + Θn          （合并两个 n/2 的子问题，需要 Θn 时间）
+### 2.4 复杂度与考点
 
-a = 2, b = 2, fn = Θn
-n的logb(a) = n的log2(2) = n的1次方 = n
-
-fn = Θn = Θn的logb(a)     → 主定理情况2
-Tn = Θnlogn
-```
+- 时间 $\Theta(n\log n)$（**最好最坏都一样**）；空间 $\Theta(n)$（临时数组）；**稳定**排序（`<=` 时取左半，相等元素相对顺序不变）。
+- **逆序对计数**（剑指 51 / LC 493）：合并时，若右半元素先被取出，则左半剩余元素都和它构成逆序对，累加 `mid - i + 1` 即可——一行改动，分治的招牌应用。
 
 ---
 
-## 四、二分查找及其变体
+## 三、二分查找与变体：每次扔掉一半
 
-### 4.1 标准二分查找
+> LeetCode：[704 二分查找](https://leetcode.cn/problems/binary-search/)（简单）、[34 查找首尾位置](https://leetcode.cn/problems/find-first-and-last-position-of-element-in-sorted-array/)（中等）、[35 搜索插入位置](https://leetcode.cn/problems/search-insert-position/)（简单）、[33 搜索旋转排序数组](https://leetcode.cn/problems/search-in-rotated-sorted-array/)（中等）、[153 寻找旋转排序数组最小值](https://leetcode.cn/problems/find-minimum-in-rotated-sorted-array/)（中等）、[875 爱吃香蕉的珂珂](https://leetcode.cn/problems/koko-eating-bananas/)（二分答案，中等）
 
-```java
-/**
- * 二分查找实现
- */
-public class BinarySearch {
+### 3.1 直觉
 
-    /**
-     * 标准二分查找
-     * 在有序数组中查找目标值
-     *
-     * @param arr 有序数组
-     * @param target 目标值
-     * @return 目标值索引，若不存在返回 -1
-     */
-    public static int search(int[] arr, int target) {
-        int left = 0;
-        int right = arr.length - 1;
-
-        while (left <= right) {
-            // 防止溢出
-            int mid = left + (right - left) / 2;
-
-            if (arr[mid] == target) {
-                return mid;  // 找到
-            } else if (arr[mid] < target) {
-                left = mid + 1;  // 在右半部分查找
-            } else {
-                right = mid - 1;  // 在左半部分查找
-            }
-        }
-
-        return -1;  // 未找到
-    }
-
-    /**
-     * 递归版二分查找
-     */
-    public static int searchRecursive(int[] arr, int target, int left, int right) {
-        if (left > right) {
-            return -1;  // 基准情况：未找到
-        }
-
-        int mid = left + (right - left) / 2;
-
-        if (arr[mid] == target) {
-            return mid;
-        } else if (arr[mid] < target) {
-            return searchRecursive(arr, target, mid + 1, right);
-        } else {
-            return searchRecursive(arr, target, left, mid - 1);
-        }
-    }
-}
-```
-
-### 4.2 二分查找变体
-
-```java
-/**
- * 二分查找变体集合
- */
-public class BinarySearchVariants {
-
-    /**
-     * 变体1：查找第一个等于目标值的位置
-     */
-    public static int findFirstEqual(int[] arr, int target) {
-        int left = 0, right = arr.length - 1;
-        int result = -1;
-
-        while (left <= right) {
-            int mid = left + (right - left) / 2;
-
-            if (arr[mid] >= target) {
-                if (arr[mid] == target) {
-                    result = mid;  // 记录可能的结果
-                }
-                right = mid - 1;  // 继续向左查找
-            } else {
-                left = mid + 1;
-            }
-        }
-
-        return result;
-    }
-
-    /**
-     * 变体2：查找最后一个等于目标值的位置
-     */
-    public static int findLastEqual(int[] arr, int target) {
-        int left = 0, right = arr.length - 1;
-        int result = -1;
-
-        while (left <= right) {
-            int mid = left + (right - left) / 2;
-
-            if (arr[mid] <= target) {
-                if (arr[mid] == target) {
-                    result = mid;
-                }
-                left = mid + 1;  // 继续向右查找
-            } else {
-                right = mid - 1;
-            }
-        }
-
-        return result;
-    }
-
-    /**
-     * 变体3：查找第一个大于等于目标值的位置
-     */
-    public static int findFirstGreaterOrEqual(int[] arr, int target) {
-        int left = 0, right = arr.length - 1;
-
-        while (left <= right) {
-            int mid = left + (right - left) / 2;
-
-            if (arr[mid] >= target) {
-                if (mid == 0 || arr[mid - 1] < target) {
-                    return mid;
-                }
-                right = mid - 1;
-            } else {
-                left = mid + 1;
-            }
-        }
-
-        return arr.length;  // 所有元素都小于 target
-    }
-
-    /**
-     * 变体4：查找最后一个小于等于目标值的位置
-     */
-    public static int findLastLessOrEqual(int[] arr, int target) {
-        int left = 0, right = arr.length - 1;
-
-        while (left <= right) {
-            int mid = left + (right - left) / 2;
-
-            if (arr[mid] <= target) {
-                if (mid == arr.length - 1 || arr[mid + 1] > target) {
-                    return mid;
-                }
-                left = mid + 1;
-            } else {
-                right = mid - 1;
-            }
-        }
-
-        return -1;  // 所有元素都大于 target
-    }
-
-    /**
-     * 变体5：在旋转数组中查找
-     */
-    public static int searchInRotated(int[] arr, int target) {
-        int left = 0, right = arr.length - 1;
-
-        while (left <= right) {
-            int mid = left + (right - left) / 2;
-
-            if (arr[mid] == target) {
-                return mid;
-            }
-
-            // 判断哪一半是有序的
-            if (arr[left] <= arr[mid]) {  // 左半部分有序
-                if (arr[left] <= target && target < arr[mid]) {
-                    right = mid - 1;
-                } else {
-                    left = mid + 1;
-                }
-            } else {  // 右半部分有序
-                if (arr[mid] < target && target <= arr[right]) {
-                    left = mid + 1;
-                } else {
-                    right = mid - 1;
-                }
-            }
-        }
-
-        return -1;
-    }
-}
-```
-
-### 4.3 二分查找流程图
-
-```mermaid
-flowchart TD
-    A["开始<br/>查找 target"] --> B["left=0, right=n-1"]
-    B --> C{"left ≤ right?"}
-    C -->|否| D["返回 -1<br/>未找到"]
-    C -->|是| E["mid = left + right / 2"]
-    E --> F{"arr[mid] == target?"}
-    F -->|是| G["返回 mid<br/>找到"]
-    F -->|否| H{"arr[mid] < target?"}
-    H -->|是| I["left = mid + 1"]
-    H -->|否| J["right = mid - 1"]
-    I --> C
-    J --> C
-
-    style A fill:#ff9,stroke:#333
-    style G fill:#9f9,stroke:#333
-    style D fill:#f96,stroke:#333
-```
-
----
-
-## 五、Strassen 矩阵乘法
-
-### 5.1 标准矩阵乘法
-
-```java
-/**
- * 矩阵乘法
- */
-public class MatrixMultiplication {
-
-    /**
-     * 标准矩阵乘法
-     * 时间复杂度：O(n³)
-     *
-     * @param A m×n 矩阵
-     * @param B n×p 矩阵
-     * @return m×p 矩阵
-     */
-    public static int[][] multiplyStandard(int[][] A, int[][] B) {
-        int m = A.length;       // 行数
-        int n = A[0].length;    // A 的列数
-        int p = B[0].length;    // B 的列数
-
-        int[][] C = new int[m][p];
-
-        for (int i = 0; i < m; i++) {
-            for (int j = 0; j < p; j++) {
-                C[i][j] = 0;
-                for (int k = 0; k < n; k++) {
-                    C[i][j] += A[i][k] * B[k][j];
-                }
-            }
-        }
-
-        return C;
-    }
-}
-```
-
-### 5.2 Strassen 算法原理
-
-**核心思想**：通过巧妙的矩阵分块和代数变换，将8次乘法减少到7次。
-
-```mermaid
-graph TD
-    subgraph "Strassen 分块"
-    A["A = ┌ A11 A12 ┐<br/>    └ A21 A23 ┘"] --> B["B = ┌ B11 B12 ┐<br/>    └ B21 B22 ┘"]
-    B --> C["C = A × B"]
-    end
-
-    subgraph "Strassen 7 次乘法"
-    D["M1 = A11×B11 + A12×B21"]
-    E["M2 = A11×B12 + A12×B22"]
-    F["M3 = A21×B11 + A22×B21"]
-    G["M4 = A21×B22 - A11×B22"]
-    H["M5 = A11×B12 - A21×B12"]
-    I["M6 = A12×B22 - A22×B22"]
-    J["M7 = A11×B11 - A21×B11"]
-    end
-
-    C --> D & E & F & G & H & I & J
-```
-
-### 5.3 Strassen 算法实现
-
-```java
-/**
- * Strassen 矩阵乘法
- * 时间复杂度：O(n的log2(7)次方) ≈ O(n的2.81次方)
- */
-public class StrassenMultiplication {
-
-    /**
-     * Strassen 矩阵乘法
-     */
-    public static double[][] multiply(double[][] A, double[][] B) {
-        int n = A.length;
-
-        // 基准情况：足够小时使用标准乘法
-        if (n <= 64) {
-            return multiplyStandard(A, B);
-        }
-
-        // 确保 n 是 2 的幂
-        int size = 1;
-        while (size < n) size *= 2;
-
-        // 填充到 2 的幂次方大小
-        double[][] A_pad = padMatrix(A, size);
-        double[][] B_pad = padMatrix(B, size);
-
-        // 递归计算
-        double[][] C_pad = strassen(A_pad, B_pad, size);
-
-        // 截取原始大小
-        return extractMatrix(C_pad, n);
-    }
-
-    private static double[][] strassen(double[][] A, double[][] B, int n) {
-        if (n == 1) {
-            double[][] C = new double[1][1];
-            C[0][0] = A[0][0] * B[0][0];
-            return C;
-        }
-
-        int half = n / 2;
-
-        // 分割矩阵
-        double[][] A11 = getQuadrant(A, 0, 0, half);
-        double[][] A12 = getQuadrant(A, 0, half, half);
-        double[][] A21 = getQuadrant(A, half, 0, half);
-        double[][] A22 = getQuadrant(A, half, half, half);
-
-        double[][] B11 = getQuadrant(B, 0, 0, half);
-        double[][] B12 = getQuadrant(B, 0, half, half);
-        double[][] B21 = getQuadrant(B, half, 0, half);
-        double[][] B22 = getQuadrant(B, half, half, half);
-
-        // 计算 7 个 M 值
-        double[][] M1 = strassen(add(A11, A22), add(B11, B22), half);
-        double[][] M2 = strassen(add(A12, A22), B11, half);
-        double[][] M3 = strassen(A11, sub(B12, B22), half);
-        double[][] M4 = strassen(A22, sub(B21, B11), half);
-        double[][] M5 = strassen(add(A11, A12), B22, half);
-        double[][] M6 = strassen(sub(A21, A11), add(B11, B12), half);
-        double[][] M7 = strassen(sub(A12, A22), add(B21, B22), half);
-
-        // 计算 C 的四个块
-        double[][] C11 = sub(add(add(M1, M4), M7), M5);
-        double[][] C12 = add(M3, M5);
-        double[][] C21 = add(M2, M4);
-        double[][] C22 = sub(add(add(M1, M3), M6), M2);
-
-        // 合并结果
-        return combine(C11, C12, C21, C22, half);
-    }
-
-    // 辅助方法：矩阵加法
-    private static double[][] add(double[][] A, double[][] B) {
-        int n = A.length;
-        double[][] C = new double[n][n];
-        for (int i = 0; i < n; i++) {
-            for (int j = 0; j < n; j++) {
-                C[i][j] = A[i][j] + B[i][j];
-            }
-        }
-        return C;
-    }
-
-    // 辅助方法：矩阵减法
-    private static double[][] sub(double[][] A, double[][] B) {
-        int n = A.length;
-        double[][] C = new double[n][n];
-        for (int i = 0; i < n; i++) {
-            for (int j = 0; j < n; j++) {
-                C[i][j] = A[i][j] - B[i][j];
-            }
-        }
-        return C;
-    }
-
-    // 其他辅助方法省略...
-    private static double[][] multiplyStandard(double[][] A, double[][] B) {
-        // 标准乘法实现
-        return null;  // 省略
-    }
-
-    private static double[][] padMatrix(double[][] A, int size) { return null; }
-    private static double[][] extractMatrix(double[][] A, int n) { return null; }
-    private static double[][] getQuadrant(double[][] A, int row, int col, int size) { return null; }
-    private static double[][] combine(double[][] A, double[][] B, double[][] C, double[][] D, int size) { return null; }
-}
-```
-
-### 5.4 算法复杂度对比
-
-| 算法 | 时间复杂度 | 乘法次数 | 加法次数 |
-|-----|-----------|---------|---------|
-| 标准算法 | $O(n^3)$ | $n^3$ | $n^3(n-1)$ |
-| Strassen | $O(n^{\log_2 7}) \approx O(n^{2.81})$ | $7n^{2.81}$ | $18n^{2.81}$ |
+有序数组里查 target：和中间比一比，**不相等就扔掉不可能的一半**。每次规模减半：`T(n) = T(n/2) + Θ(1) → Θ(log n)`。
 
 ```mermaid
 graph LR
-    subgraph 复杂度对比
-    A["标准算法"] -->|"O n³"| B["Strassen"]
-    A -->|"| C["n 较大时优势明显"]
-    end
+    A["lo=0, hi=6<br/>target=9"] -->|"mid=3, a[3]=27 > 9"| B["扔掉右半<br/>hi=mid-1=2"]
+    B -->|"mid=1, a[1]=9"| C["命中，返回 1"]
 
-    subgraph n=1024
-    D["标准: 10⁹ 次乘法"]
-    E["Strassen: 10⁸ 次乘法"]
-    end
+    classDef range fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef step fill:#80DEEA,stroke:#0097A7,color:#1f1f1f
+    classDef hit fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    class A range
+    class B step
+    class C hit
 ```
+
+### 3.2 标准二分 + 两个必会变体
+
+**Java**：
+
+```java
+public class BinarySearch {
+
+    /** 标准版：找到返回下标，找不到返回 -1（LC 704） */
+    public static int search(int[] a, int target) {
+        int lo = 0, hi = a.length - 1;
+        while (lo <= hi) {
+            int mid = lo + (hi - lo) / 2;             // 防溢出写法
+            if (a[mid] == target) return mid;
+            else if (a[mid] < target) lo = mid + 1;   // 扔掉左半
+            else hi = mid - 1;                        // 扔掉右半
+        }
+        return -1;
+    }
+
+    /** 左边界版：第一个 >= target 的下标（LC 34/35 的核心） */
+    public static int lowerBound(int[] a, int target) {
+        int lo = 0, hi = a.length;                    // 注意：开区间写法
+        while (lo < hi) {
+            int mid = lo + (hi - lo) / 2;
+            if (a[mid] >= target) hi = mid;           // mid 可能是答案，保留
+            else lo = mid + 1;
+        }
+        return lo;                                    // 全部小于 target 时返回 n
+    }
+
+    /** 旋转数组版：先判哪一半有序（LC 33） */
+    public static int searchRotated(int[] a, int target) {
+        int lo = 0, hi = a.length - 1;
+        while (lo <= hi) {
+            int mid = lo + (hi - lo) / 2;
+            if (a[mid] == target) return mid;
+            if (a[lo] <= a[mid]) {                    // 左半有序
+                if (a[lo] <= target && target < a[mid]) hi = mid - 1;
+                else lo = mid + 1;
+            } else {                                  // 右半有序
+                if (a[mid] < target && target <= a[hi]) lo = mid + 1;
+                else hi = mid - 1;
+            }
+        }
+        return -1;
+    }
+
+    public static void main(String[] args) {
+        int[] a = {3, 9, 10, 27, 38, 43, 82};
+        System.out.println(search(a, 9));                          // 1
+        int[] dup = {5, 7, 7, 8, 8, 10};
+        System.out.println(lowerBound(dup, 8));                    // 3（第一个 8）
+        int[] rot = {4, 5, 6, 7, 0, 1, 2};
+        System.out.println(searchRotated(rot, 0));                 // 4
+    }
+}
+```
+
+**Python**：
+
+```python
+def search(a, target):
+    """标准版：找到返回下标，找不到返回 -1（LC 704）"""
+    lo, hi = 0, len(a) - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if a[mid] == target: return mid
+        elif a[mid] < target: lo = mid + 1
+        else: hi = mid - 1
+    return -1
+
+def lower_bound(a, target):
+    """左边界版：第一个 >= target 的下标（LC 34/35 的核心）"""
+    lo, hi = 0, len(a)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if a[mid] >= target: hi = mid
+        else: lo = mid + 1
+    return lo
+
+def search_rotated(a, target):
+    """旋转数组版：先判哪一半有序（LC 33）"""
+    lo, hi = 0, len(a) - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if a[mid] == target: return mid
+        if a[lo] <= a[mid]:
+            if a[lo] <= target < a[mid]: hi = mid - 1
+            else: lo = mid + 1
+        else:
+            if a[mid] < target <= a[hi]: lo = mid + 1
+            else: hi = mid - 1
+    return -1
+
+if __name__ == "__main__":
+    print(search([3, 9, 10, 27, 38, 43, 82], 9))   # 1
+    print(lower_bound([5, 7, 7, 8, 8, 10], 8))     # 3
+    print(search_rotated([4, 5, 6, 7, 0, 1, 2], 0)) # 4
+```
+
+### 3.3 易错点（面试必问）
+
+- **区间定义要一致**：`while (lo <= hi)` 配闭区间、`hi = mid - 1`；`while (lo < hi)` 配左闭右开、`hi = mid`。混用必死循环。
+- **mid 防溢出**：Java/C++ 写 `lo + (hi - lo) / 2`，别写 `(lo + hi) / 2`（Python 无所谓）。
+- **「二分答案」思维**：875（吃香蕉）、1011（运货）这类题，答案单调可判定 → 对**答案**二分，把「求最小可行解」变成「判定可行否」。
 
 ---
 
-## 六、快速幂算法
+## 四、快速幂：分治用在指数上
 
-### 6.1 问题描述
+> LeetCode：[50 Pow(x, n)](https://leetcode.cn/problems/powx-n/)（中等）、[372 超级次方](https://leetcode.cn/problems/super-pow/)（中等）
 
-**问题**：计算 $a^n$，其中 $n$ 是非负整数。
+### 4.1 直觉
 
-**朴素算法**：$O(n)$ 次乘法
-**优化算法**：$O(\log n)$ 次乘法
+算 $a^{13}$ 不用乘 13 次：$a^{13} = a^8 \cdot a^4 \cdot a^1$——把指数写成二进制 `1101`，**每一位对应一个平方项**：
 
-### 6.2 快速幂实现
+```mermaid
+flowchart LR
+    A["a^13<br/>指数 1101"] --> B["a^1 = a<br/>第 0 位是 1，乘入"]
+    B --> C["a^2<br/>第 1 位是 0，跳过"]
+    C --> D["a^4<br/>第 2 位是 1，乘入"]
+    D --> E["a^8<br/>第 3 位是 1，乘入"]
+    E --> F["a^8 · a^4 · a^1<br/>= a^13"]
+
+    classDef start fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef mul fill:#80DEEA,stroke:#0097A7,color:#1f1f1f
+    classDef skip fill:#EF9A9A,stroke:#C62828,color:#1f1f1f
+    classDef done fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    class A start
+    class B,D,E mul
+    class C skip
+    class F done
+```
+
+每轮 base 自乘（`a → a² → a⁴ → a⁸`），指数右移一位，遇到 1 就乘进答案。乘法次数从 $O(n)$ 降到 $O(\log n)$。
+
+### 4.2 代码
+
+**Java**：
 
 ```java
-/**
- * 快速幂算法
- */
-public class FastExponentiation {
-
-    /**
-     * 递归版快速幂
-     * 时间复杂度：O(log n)
-     *
-     * @param a 底数
-     * @param n 指数
-     * @return a^n
-     */
-    public static double power(double a, long n) {
-        // 基准情况
-        if (n == 0) {
-            return 1;
+public class FastPow {
+    /** 迭代版快速幂（LC 50），处理负指数 */
+    public static double pow(double x, long n) {
+        if (n < 0) { x = 1 / x; n = -n; }             // 负指数翻转
+        double result = 1, base = x;
+        while (n > 0) {
+            if (n % 2 == 1) result *= base;           // 当前位是 1 才乘入
+            base *= base;                             // base 平方
+            n /= 2;                                   // 指数右移
         }
-        if (n == 1) {
-            return a;
-        }
-
-        // 递归计算 a^(n/2)
-        double halfPower = power(a, n / 2);
-
-        // 如果 n 是偶数：a^n = (a^(n/2))²
-        // 如果 n 是奇数：a^n = (a^(n/2))² × a
-        if (n % 2 == 0) {
-            return halfPower * halfPower;
-        } else {
-            return halfPower * halfPower * a;
-        }
-    }
-
-    /**
-     * 迭代版快速幂
-     * 使用二进制分解
-     */
-    public static double powerIterative(double a, long n) {
-        double result = 1;
-        double base = a;
-        long exponent = n;
-
-        while (exponent > 0) {
-            // 如果当前位是 1，乘入结果
-            if (exponent % 2 == 1) {
-                result *= base;
-            }
-            // base 平方，exponent 右移
-            base *= base;
-            exponent /= 2;
-        }
-
         return result;
     }
 
-    /**
-     * 矩阵快速幂
-     */
-    public static int[][] matrixPower(int[][] base, long exponent) {
-        int n = base.length;
-        int[][] result = identityMatrix(n);
-
-        while (exponent > 0) {
-            if (exponent % 2 == 1) {
-                result = multiply(result, base);
-            }
-            base = multiply(base, base);
-            exponent /= 2;
-        }
-
-        return result;
-    }
-
-    private static int[][] multiply(int[][] A, int[][] B) {
-        // 矩阵乘法
-        return null;  // 省略
-    }
-
-    private static int[][] identityMatrix(int n) {
-        int[][] I = new int[n][n];
-        for (int i = 0; i < n; i++) {
-            I[i][i] = 1;
-        }
-        return I;
+    public static void main(String[] args) {
+        System.out.println(pow(2, 13));               // 8192.0
+        System.out.println(pow(2, -2));               // 0.25
     }
 }
 ```
 
-### 6.3 快速幂流程图
+**Python**：
 
-```mermaid
-flowchart TD
-    A["power(a, n)"] --> B{"n == 0?"}
-    B -->|是| C["返回 1"]
-    B -->|否| D["half = power(a, n/2)"]
-    D --> E{"n 是偶数?"}
-    E -->|是| F["返回 half × half"]
-    E -->|否| G["返回 half × half × a"]
+```python
+def pow_(x, n):
+    """迭代版快速幂（LC 50），处理负指数。"""
+    if n < 0:
+        x, n = 1 / x, -n
+    result, base = 1.0, x
+    while n > 0:
+        if n & 1:
+            result *= base
+        base *= base
+        n >>= 1
+    return result
 
-    style A fill:#ff9,stroke:#333
-    style C fill:#9f9,stroke:#333
-    style F fill:#9f9,stroke:#333
-    style G fill:#9f9,stroke:#333
+if __name__ == "__main__":
+    print(pow_(2, 13))   # 8192.0
+    print(pow_(2, -2))   # 0.25
 ```
 
-**递归式**：$T(n) = T(n/2) + \Theta(1) = O(\log n)$
+> 💡 同一个「折半平方」思想套在矩阵上就是**矩阵快速幂**（见下节斐波那契）。
 
 ---
 
-## 七、计算斐波那契数
+## 五、斐波那契：分治翻车的经典现场
 
-### 7.1 斐波那契数列
+> LeetCode：[509 斐波那契数](https://leetcode.cn/problems/fibonacci-number/)（简单）、[70 爬楼梯](https://leetcode.cn/problems/climbing-stairs/)（简单）
 
-$$F_n = \begin{cases} 0 & \text{if } n = 0 \\ 1 & \text{if } n = 1 \\ F_{n-1} + F_{n-2} & \text{if } n \geq 2 \end{cases}$$
+### 5.1 朴素递归为什么爆炸
 
-### 7.2 朴素递归的问题
+`fib(n) = fib(n-1) + fib(n-2)` 直接递归，看它的调用树：
 
 ```mermaid
 graph TD
-    F5["F5"] --> F4["F4"] & F3["F3"]
-    F4 --> F3 & F2
-    F3 --> F2 & F1
-    F2 --> F1 & F0
-    F3 --> F2 & F1
+    f5["fib(5)"] --> f4["fib(4)"] & f3a["fib(3)"]
+    f4 --> f3b["fib(3)"] & f2a["fib(2)"]
+    f3a --> f2b["fib(2)"] & f1a["fib(1)"]
+    f3b --> f2c["fib(2)"] & f1b["fib(1)"]
 
-    style F3 fill:#f96,stroke:#333
-    style F2 fill:#f96,stroke:#333
-
-    Note["重复计算：<br/>F2 计算 3 次<br/>F1 计算 5 次<br/>F0 计算 3 次"]
+    classDef root fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef once fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    classDef dup fill:#CE93D8,stroke:#7B1FA2,color:#1f1f1f
+    class f5 root
+    class f4 once
+    class f3a,f3b,f2a,f2b,f2c dup
+    class f1a,f1b dup
 ```
 
-**朴素递归复杂度**：$T(n) = T(n-1) + T(n-2) = O(\phi^n)$，其中 $\phi \approx 1.618$
+**紫色全是重复计算**：`fib(3)` 算 2 遍、`fib(2)` 算 3 遍……$n$ 稍大就指数爆炸 $O(2^n)$。
 
-### 7.3 分治优化：矩阵快速幂法
+> 🔑 **分治要求子问题独立**，这里 fib(4) 和 fib(3) 大量重叠——**子问题重叠 = 动态规划的信号**（第 14 章）。分治翻车，DP 接盘。
 
-```java
-/**
- * 斐波那契数列计算
- */
-public class Fibonacci {
+### 5.2 三种写法对比
 
-    /**
-     * 方法1：朴素递归
-     * 时间复杂度：O(2^n)
-     */
-    public static long fibRecursive(long n) {
-        if (n <= 1) {
-            return n;
-        }
-        return fibRecursive(n - 1) + fibRecursive(n - 2);
-    }
+```python
+# ① 朴素递归：O(2^n)，重复计算爆炸（反面教材）
+def fib_naive(n):
+    return n if n <= 1 else fib_naive(n - 1) + fib_naive(n - 2)
 
-    /**
-     * 方法2：动态规划（自底向上）
-     * 时间复杂度：O(n)
-     */
-    public static long fibDP(long n) {
-        if (n <= 1) {
-            return n;
-        }
+# ② 迭代 DP：O(n) 时间 O(1) 空间，实用最优
+def fib(n):
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return a
 
-        long prev2 = 0;  // F0
-        long prev1 = 1;  // F1
-        long current = 0;
+# ③ 矩阵快速幂：O(log n)，把 [F(n+1), F(n); F(n), F(n-1)] = [[1,1],[1,0]]^n
+def fib_matrix(n):
+    def mul(A, B):
+        return [[A[0][0]*B[0][0] + A[0][1]*B[1][0], A[0][0]*B[0][1] + A[0][1]*B[1][1]],
+                [A[1][0]*B[0][0] + A[1][1]*B[1][0], A[1][0]*B[0][1] + A[1][1]*B[1][1]]]
+    result, base, e = [[1, 0], [0, 1]], [[1, 1], [1, 0]], n
+    while e > 0:
+        if e & 1:
+            result = mul(result, base)
+        base, e = mul(base, base), e >> 1
+    return result[0][1]
 
-        for (int i = 2; i <= n; i++) {
-            current = prev1 + prev2;
-            prev2 = prev1;
-            prev1 = current;
-        }
-
-        return current;
-    }
-
-    /**
-     * 方法3：分治 + 矩阵快速幂
-     * 时间复杂度：O(log n)
-     *
-     * 核心：| F(n+1)  F(n)   |   = | 1 1 |^n
-     *       | F(n)    F(n-1)|     | 1 0 |
-     */
-    public static long fibMatrix(long n) {
-        if (n <= 1) {
-            return n;
-        }
-
-        // 计算矩阵的 n 次方
-        long[][] result = {{1, 0}, {0, 1}};  // 单位矩阵
-        long[][] base = {{1, 1}, {1, 0}};
-        long exponent = n - 1;
-
-        while (exponent > 0) {
-            if (exponent % 2 == 1) {
-                result = multiply(result, base);
-            }
-            base = multiply(base, base);
-            exponent /= 2;
-        }
-
-        // result = | F(n+1)  F(n)   |
-        //          | F(n)    F(n-1) |
-        return result[0][1];
-    }
-
-    private static long[][] multiply(long[][] A, long[][] B) {
-        long[][] C = new long[2][2];
-        C[0][0] = A[0][0] * B[0][0] + A[0][1] * B[1][0];
-        C[0][1] = A[0][0] * B[0][1] + A[0][1] * B[1][1];
-        C[1][0] = A[1][0] * B[0][0] + A[1][1] * B[1][0];
-        C[1][1] = A[1][0] * B[0][1] + A[1][1] * B[1][1];
-        return C;
-    }
-}
+if __name__ == "__main__":
+    print([fib(i) for i in range(10)])         # [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+    print(fib_matrix(10))                      # 55
 ```
 
-### 7.4 斐波那契计算方法对比
-
-| 方法 | 时间复杂度 | 空间复杂度 | 说明 |
-|-----|-----------|-----------|------|
-| 朴素递归 | $O(2^n)$ | $O(n)$ | 大量重复计算 |
-| 迭代 DP | $O(n)$ | $O(1)$ | 最佳实用解 |
-| 矩阵快速幂 | $O(\log n)$ | $O(1)$ | 理论最优 |
+| 方法 | 时间 | 空间 | 说明 |
+|------|------|------|------|
+| 朴素递归 | $O(2^n)$ | $O(n)$ 栈 | 子问题重叠，分治翻车 |
+| 迭代 DP | $O(n)$ | $O(1)$ | 实用首选 |
+| 矩阵快速幂 | $O(\log n)$ | $O(1)$ | 理论最优，超大型 $n$ 用 |
 
 ---
 
-## 八、最近点对问题
+## 六、最近点对：分治压轴题（选读）
 
-### 8.1 问题描述
+**问题**：平面上 $n$ 个点，找距离最近的两个点。暴力 $O(n^2)$，分治 $O(n \log n)$。
 
-**问题**：在平面上的 $n$ 个点中，找到距离最近的两个点。
+### 6.1 思路（文字版）
 
-**暴力解法**：检查所有 $\binom{n}{2}$ 对点，$O(n^2)$
-
-**分治解法**：$O(n \log n)$
-
-### 8.2 分治策略
+1. 按 x 坐标排序，从中间竖着切成左右两半；
+2. 递归求左半最近距离 $d_L$、右半 $d_R$，取 $d = \min(d_L, d_R)$；
+3. **麻烦在跨界**：最近的两个点可能一个在左一个在右。但跨界点对必落在中间宽度 $2d$ 的**竖条带**里，只需在条带内继续找；
+4. 条带内按 y 排序后，**每个点只需和后面 7 个点比**（直觉：条带左右两半各是 $d\times d$ 区域，里面两两距离都 $\ge d$，每半最多装 4 个点），所以合并只要 $\Theta(n)$。
 
 ```mermaid
-graph TD
-    A["最近点对问题"] --> B["按 x 坐标排序"]
-    B --> C["中点划分左右两部分"]
-    C --> D["递归求左右最近距离"]
-    D --> E["处理跨中线的点对"]
-    E --> F["合并结果"]
+graph LR
+    subgraph L["左半（递归得 dL）"]
+        p1(("•")) --- p2(("•"))
+        p3(("•"))
+    end
+    subgraph S["中间条带 宽 2d"]
+        p4(("•"))
+        p5(("•"))
+    end
+    subgraph R["右半（递归得 dR）"]
+        p6(("•")) --- p7(("•"))
+    end
 
-    D --> D1["dl = 左边最近距离"]
-    D --> D2["dr = 右边最近距离"]
-    D --> D3["d = mindl, dr"]
-    E --> E1["中线附近的点<br/>宽度 2d 的条带"]
-    E --> E2["条带内最多 8 个点"]
-    E --> E3["检查跨线点对"]
+    classDef strip fill:#CE93D8,stroke:#7B1FA2,color:#1f1f1f
+    class p4,p5 strip
+
+    style L fill:#E3F2FD,stroke:#1976D2,color:#1f1f1f
+    style S fill:#F3E5F5,stroke:#7B1FA2,color:#1f1f1f
+    style R fill:#E8F5E9,stroke:#388E3C,color:#1f1f1f
 ```
 
-### 8.3 算法实现
+每层合并 $\Theta(n)$、共 $\log n$ 层 → $T(n)=2T(n/2)+\Theta(n)=\Theta(n\log n)$。
 
-```java
-import java.util.*;
+### 6.2 代码骨架（Python）
 
-/**
- * 最近点对问题分治解法
- */
-public class ClosestPair {
+```python
+import math
 
-    static class Point {
-        double x, y;
+def closest_pair(points):
+    """points: [(x, y), ...]，返回最近点对距离。O(n log n)。"""
+    px = sorted(points)                                  # 按 x 排序
+    py = sorted(points, key=lambda p: p[1])              # 按 y 排序
 
-        Point(double x, double y) {
-            this.x = x;
-            this.y = y;
-        }
-    }
+    def rec(px, py):
+        if len(px) <= 3:                                 # 小规模暴力
+            return min((dist(px[i], px[j])
+                        for i in range(len(px)) for j in range(i + 1, len(px))),
+                       default=math.inf)
+        mid = len(px) // 2
+        midx = px[mid][0]
+        left_x, right_x = px[:mid], px[mid:]
+        left_ids = {id(p) for p in left_x}             # 按对象归属划分 y 数组
+        left_y = [p for p in py if id(p) in left_ids]
+        right_y = [p for p in py if id(p) not in left_ids]
+        d = min(rec(left_x, left_y), rec(right_x, right_y))
 
-    /**
-     * 主方法：找到最近点对的距离
-     */
-    public static double closestPair(List<Point> points) {
-        // 按 x 坐标排序
-        points.sort(Comparator.comparingDouble(p -> p.x));
+        strip = [p for p in py if abs(p[0] - midx) < d]  # 条带（保持 y 序）
+        for i in range(len(strip)):                      # 每点最多查后 7 个
+            for j in range(i + 1, min(i + 8, len(strip))):
+                d = min(d, dist(strip[i], strip[j]))
+        return d
 
-        return closestPair(points, 0, points.size() - 1);
-    }
+    def dist(a, b):
+        return math.hypot(a[0] - b[0], a[1] - b[1])
 
-    private static double closestPair(List<Point> points, int left, int right) {
-        // 基准情况：只有 2-3 个点
-        if (right - left <= 3) {
-            return bruteForce(points, left, right);
-        }
+    return rec(px, py)
 
-        // 划分
-        int mid = (left + right) / 2;
-        double midX = points.get(mid).x;
-
-        // 递归求解左右两边
-        double dl = closestPair(points, left, mid);
-        double dr = closestPair(points, mid + 1, right);
-        double d = Math.min(dl, dr);
-
-        // 合并：处理跨越中线的点对
-        return Math.min(d, stripClosest(points, midX, d, left, right));
-    }
-
-    /**
-     * 处理中线附近的点
-     */
-    private static double stripClosest(List<Point> points, double midX,
-                                        double d, int left, int right) {
-        // 提取中线附近宽度为 2d 的点
-        List<Point> strip = new ArrayList<>();
-        for (int i = left; i <= right; i++) {
-            if (Math.abs(points.get(i).x - midX) < d) {
-                strip.add(points.get(i));
-            }
-        }
-
-        // 按 y 坐标排序
-        strip.sort(Comparator.comparingDouble(p -> p.y));
-
-        // 检查相邻点（最多检查 7 个）
-        double minDist = d;
-        for (int i = 0; i < strip.size(); i++) {
-            for (int j = i + 1; j < strip.size() &&
-                    strip.get(j).y - strip.get(i).y < minDist; j++) {
-                double dist = distance(strip.get(i), strip.get(j));
-                if (dist < minDist) {
-                    minDist = dist;
-                }
-            }
-        }
-
-        return minDist;
-    }
-
-    /**
-     * 暴力求解小规模问题
-     */
-    private static double bruteForce(List<Point> points, int left, int right) {
-        double min = Double.MAX_VALUE;
-        for (int i = left; i <= right; i++) {
-            for (int j = i + 1; j <= right; j++) {
-                double dist = distance(points.get(i), points.get(j));
-                if (dist < min) {
-                    min = dist;
-                }
-            }
-        }
-        return min;
-    }
-
-    private static double distance(Point a, Point b) {
-        double dx = a.x - b.x;
-        double dy = a.y - b.y;
-        return Math.sqrt(dx * dx + dy * dy);
-    }
-}
+if __name__ == "__main__":
+    print(closest_pair([(0, 0), (3, 4), (1, 1), (10, 10)]))  # 1.4142135623730951
 ```
+
+> 📌 此题面试罕见、竞赛经典；LeetCode 无直接对应题。记住结论即可：**分治 + 条带剪枝 = $O(n\log n)$**。
 
 ---
 
-## 九、总结与要点
+## 七、趣闻：Strassen 矩阵乘法
 
-### 9.1 核心概念回顾
+朴素矩阵乘法 $\Theta(n^3)$。把矩阵切 4 块直接分治要 8 次递归乘法 → 还是 $\Theta(n^3)$，白拆。1969 年 Strassen 用一堆加减法凑出一个代数恒等式，把递归乘法从 **8 次压到 7 次** → `T(n) = 7T(n/2) + Θ(n²)`，查速查表第一行：$\Theta(n^{\log_2 7}) \approx \Theta(n^{2.81})$。
 
-```mermaid
-flowchart TD
-    A["第四章核心"] --> B["分治策略"]
-    A --> C["递归式分析"]
-    A --> D["主定理应用"]
-    A --> E["经典算法"]
-
-    B --> B1["分解-解决-合并"]
-    B --> B2["最优子结构"]
-    B --> B3["子问题独立"]
-
-    C --> C1["递归树方法"]
-    C --> C2["展开法"]
-
-    D --> D1["情况1：fn 较小"]
-    D --> D2["情况2：fn 相等"]
-    D --> D3["情况3：fn 较大"]
-
-    E --> E1["归并排序"]
-    E --> E2["二分查找"]
-    E --> E3["Strassen"]
-    E --> E4["快速幂"]
-
-    style A fill:#ff9,stroke:#333
-```
-
-### 9.2 递归式速查表
-
-| 递归式 | 解 | 例子 |
-|-------|-----|------|
-| $T(n) = 2T(n/2) + \Theta(n)$ | $\Theta(n \log n)$ | 归并排序 |
-| $T(n) = 2T(n/2) + \Theta(1)$ | $\Theta(n)$ | 二分查找 |
-| $T(n) = T(n-1) + \Theta(1)$ | $\Theta(n)$ | 线性遍历 |
-| $T(n) = 2T(n/2) + \Theta(n^2)$ | $\Theta(n^2)$ | Strassen |
-| $T(n) = T(n/2) + \Theta(1)$ | $\Theta(\log n)$ | 快速幂 |
-
-### 9.3 分治 vs 动态规划
-
-| 特性 | 分治 | 动态规划 |
-|-----|------|---------|
-| 子问题 | 独立 | 可能重叠 |
-| 重复计算 | 无 | 有（需记忆） |
-| 典型应用 | 归并、快速幂 | 斐波那契、背包 |
-| 复杂度 | $O(n \log n)$ | 可优化至 $O(n)$ |
+**启示**：分治的收益不只在「拆」，还在「拆完后能不能用代数技巧少递归一次」。细节对做题无用，记住 $n^{2.81}$ 这个里程碑数字即可。
 
 ---
 
-## 课后思考
+## 八、总结
 
-### 思考题 1
-使用主定理分析 Strassen 算法的时间复杂度。
+### 8.1 分治 vs 动态规划 vs 减治
 
-### 思考题 2
-证明：使用矩阵快速幂计算斐波那契数的时间复杂度为 $O(\log n)$。
+| | 分治 | 动态规划 | 减治（减而治之） |
+|---|---|---|---|
+| 子问题 | **互相独立** | **大量重叠** | 只留一个子问题 |
+| 做法 | 全部递归求解再合并 | 记忆化 / 递推填表 | 每步扔掉一部分 |
+| 典型 | 归并排序、最近点对 | 斐波那契、背包 | 二分查找、快速幂 |
 
-### 思考题 3
-在最近点对问题中，为什么 strip 中每个点只需要检查最多 7 个相邻点？
+### 8.2 本章 LeetCode 题单
 
-### 思考题 4
-设计一个使用分治策略的算法，在 $O(n \log n)$ 时间内找到数组中的第 $k$ 小元素。
+| 题号 | 题目 | 考点 |
+|------|------|------|
+| 912 | 排序数组 | 归并模板 |
+| 148 | 排序链表 | 归并 + 链表 |
+| 23 | 合并 K 个升序链表 | 两两归并 |
+| 剑指 51 / 493 | 逆序对 / 翻转对 | 归并计数 |
+| 704 | 二分查找 | 标准模板 |
+| 34 / 35 | 首尾位置 / 插入位置 | 左边界变体 |
+| 33 / 153 | 旋转数组 | 判哪半有序 |
+| 875 / 1011 | 吃香蕉 / 运货 | 二分答案 |
+| 50 | Pow(x, n) | 快速幂 |
+| 509 / 70 | 斐波那契 / 爬楼梯 | 分治翻车 → DP |
+
+### 8.3 一句话回顾
+
+- 分治 = 分解 → 递归 → 合并；**子问题必须独立**，重叠了就用 DP。
+- 复杂度不用推：画递归树看每层，套三行速查表「谁贵听谁的」。
+- 归并的功夫在 merge，二分的功夫在区间定义，快速幂的功夫在二进制拆解。
 
 ---
 
-*本章精读笔记完成*
+*本章笔记按「应用导向」准则编写，CLRS 第四版第 4 章仅作参考。*

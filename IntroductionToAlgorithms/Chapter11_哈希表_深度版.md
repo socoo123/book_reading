@@ -1,1858 +1,626 @@
-# 第十一章：哈希表（Hash Tables）——深度详解版
+# 第十一章：哈希表
 
-> 哈希表是计算机科学中最优雅、最实用的数据结构之一。它将"大海捞针"式的查找转化为"直取目标"式的访问，是实现字典、集合、缓存等核心数据结构的基石。
+> **本章定位**：很多应用只需要一个支持「插入、查找、删除」三种操作的动态集合（字典）——编译器的符号表、Python 的 `dict`、Java 的 `HashMap` 都是。哈希表是解决字典问题最实用的结构：**最坏情况查找要 Θ(n)（不如链表好），但在合理假设下平均只要 O(1)**。
+>
+> 与前后章节的关系：本章是第 10 章基本数据结构的直接应用（链地址法用的就是第 10 章的链表）；第 12、13 章的 BST / 红黑树也能实现字典，且是有序的（支持 MIN / SUCCESSOR 等），代价是 O(lg n)——**哈希表牺牲顺序，换来平均 O(1)**。需要有序就回头看红黑树，不需要顺序就用哈希表。
 
 ---
 
-## 一、哈希表基础理论
+## 一、核心思想：把「比较查找」变成「计算定位」
 
-### 1.1 为什么需要哈希表？
+普通数组下标访问是 O(1) 的——因为位置是**算出来**的，不是**找出来**的。哈希表把这个思想推广：不拿键直接当下标（键的宇宙太大），而是用一个**哈希函数** `h` 把键 `k` 算成槽位号 `h(k)`：
 
-在讨论哈希表之前，让我们深入分析各种数据结构的查找效率：
-
-#### 1.1.1 线性查找的困境
-
-**无序数组的查找**：
-```java
-// 在无序数组中查找元素，最坏情况需要遍历整个数组
-int find(int[] arr, int target) {
-    for (int i = 0; i < arr.length; i++) {
-        if (arr[i] == target) {
-            return i;  // 找到返回索引
-        }
-    }
-    return -1;  // 未找到
-}
+```
+h: U → {0, 1, ..., m-1}
 ```
 
-**时间复杂度分析**：
-- 最坏情况：O(n) —— 需要检查所有 n 个元素
-- 平均情况：O(n/2) = O(n) —— 仍然需要检查一半元素
-- 无论数据如何组织，线性查找都无法避免全量扫描
+- `U`：键的宇宙（可能巨大甚至无限，如所有字符串）
+- `m`：哈希表的槽数（通常远小于 |U|）
+- `h(k)`：键 `k` 的哈希值，元素就存放在槽 `h(k)` 里
+
+因为 |U| > m，必然有两个不同的键映射到同一槽——这叫**冲突（collision）**。设计再好的哈希函数也不可能完全避免冲突，所以本章一半内容在讲**冲突解决**：链地址法（§五）与开放定址法（§六）。
 
 ```mermaid
 graph LR
-    subgraph LinearSearch
-    A["查找目标: 42"] --> B["检查 arr[0]"]
-    B --> C["检查 arr[1]"]
-    C --> D["检查 arr[2]"]
-    D --> E["..."]
-    E --> F["arr[i] == 42?"]
-    F -->|否| G["继续检查"]
-    F -->|是| H["返回索引 i"]
+    subgraph U["键宇宙 U（巨大）"]
+      k1["k1"]
+      k2["k2"]
+      k3["k3"]
+      k4["k4"]
+      k5["k5"]
     end
+    subgraph T["哈希表 T[0 .. m-1]（小）"]
+      s1["槽 h(k1)"]
+      s2["槽 h(k2)=h(k5)<br/>冲突!"]
+      s3["槽 h(k3)"]
+      s4["槽 h(k4)"]
+    end
+    k1 --> s1
+    k2 --> s2
+    k5 --> s2
+    k3 --> s3
+    k4 --> s4
+
+    classDef key fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef slot fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    classDef clash fill:#EF9A9A,stroke:#C62828,color:#1f1f1f
+    class k1,k2,k3,k4,k5 key
+    class s1,s3,s4 slot
+    class s2 clash
 ```
 
-#### 1.1.2 二分查找的突破
+图中 k2 与 k5 映射到同一槽（红色 = 发生冲突，对应 CLRS 图 11.2），其余键各占各的槽。
 
-**有序数组 + 二分查找**：
-```java
-// 二分查找：每次排除一半的元素
-int binarySearch(int[] arr, int target) {
-    int left = 0;
-    int right = arr.length - 1;
+---
 
-    while (left <= right) {
-        int mid = left + (right - left) / 2;
-        if (arr[mid] == target) {
-            return mid;
-        } else if (arr[mid] < target) {
-            left = mid + 1;
-        } else {
-            right = mid - 1;
-        }
-    }
-    return -1;
-}
+## 二、直接寻址表：哈希表的起点（§11.1）
+
+**思想**：当键宇宙 U = {0, 1, ..., m-1} 很小（比如员工工号只有 4 位）时，直接用键当数组下标，槽 `k` 存键为 `k` 的元素（或指向它的指针），没有就存 NIL。
+
+```
+DIRECT-ADDRESS-SEARCH(T, k)   return T[k]
+DIRECT-ADDRESS-INSERT(T, x)   T[x.key] = x
+DIRECT-ADDRESS-DELETE(T, x)   T[x.key] = NIL
 ```
 
-**时间复杂度分析**：
-```
-第 1 次比较：n/2 个元素被排除
-第 2 次比较：n/4 个元素被排除
-...
-第 k 次比较：n/2^k 个元素被排除
+三个操作都是 **O(1) 最坏时间**。例：U = {0..9}，实际键集 K = {2, 3, 5, 8}：
 
-当 n/2^k = 1 时，k = log₂n
+| 槽 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|----|---|---|---|---|---|---|---|---|---|---|
+| 内容 | NIL | NIL | →x(2) | →x(3) | NIL | →x(5) | NIL | NIL | →x(8) | NIL |
 
-结论：T(n) = O(log n)
+**致命局限**：U 一大就完了——存 32 位整数键要 2³² 个槽（16 GB 指针），字符串键更是无限宇宙。而且实际存的键集 K 往往远小于 U，绝大部分槽浪费。
+
+> **哈希表 = 直接寻址 + 哈希函数压缩**：存储开销从 Θ(|U|) 降到 Θ(|K|)，代价是 O(1) 从「最坏保证」降级为「平均保证」，且必须处理冲突。
+
+> 工程技巧（习题 11.1-2/11.1-4）：若无卫星数据，可用 **m 位的位向量**代替指针数组；若数组巨大无法初始化，可用「栈数组 + 双向指针对拍」实现 O(1) 初始化的直接寻址。
+
+---
+
+## 三、哈希函数（§11.3）
+
+### 3.1 好哈希函数的标准
+
+1. **确定性**：同一键每次算出同一哈希值（否则存进去就找不回来）。
+2. **快**：O(1) 时间可算。
+3. **近似均匀**：尽量把键均匀撒到 m 个槽里。
+
+理论上的理想模型叫**独立均匀哈希（independent uniform hashing）**：每个键独立地等概率落到任一槽（又称**随机预言机** random oracle）。它不可实现，但它是分析性能的假设基准——后文所有「平均 O(1)」结论都在这个假设下成立。
+
+### 3.2 除法哈希：`h(k) = k mod m`
+
+最简单、最快（一次取余）。**m 的选择是关键**：
+
+- **选质数，且不太接近 2 的幂**（CLRS 的建议）。例如存约 2000 个键、α 目标 3 左右，取 m = 701（质数，离 512 和 1024 都不近）。
+- **反例**：m = 2ᵖ 时 `k mod m` 只取 k 的最低 p 位——若键是「高位相同、低位规律」的数据（如内存地址的低几位总有对齐模式），大量键挤进少数槽。
+
+### 3.3 乘法哈希：`h(k) = ⌊m · (kA mod 1)⌋`
+
+两步：用常数 A（0 < A < 1）乘 k 取小数部分，再乘 m 向下取整。**优点：对 m 不敏感**，m 取多少都行。Knuth 推荐黄金分割的分数部分：
+
 ```
+A ≈ (√5 − 1)/2 ≈ 0.6180339887
+```
+
+例（习题 11.3-4，已用代码核对）：m = 1000，A = (√5−1)/2，h(61)=700，h(62)=318，h(63)=936，h(64)=554，h(65)=172——连续的键被打散到不相邻的槽。
+
+### 3.4 multiply-shift：乘法哈希的工程版（第四版重点）
+
+浮点运算慢且精度有坑。实际用整数实现：取 m = 2ˡ（l ≤ 机器字长 w），选 w 位整数 a = A·2ʷ，则
+
+```
+h_a(k) = (k·a mod 2ʷ) ≫ (w − l)
+```
+
+即：w 位乘 w 位得 2w 位积，**丢掉高 w 位 r1，取低 w 位 r0 的最高 l 位**。只要乘法、取模（溢出自动完成）、逻辑右移三条机器指令。
 
 ```mermaid
 graph TD
-    subgraph BinarySearch
-    A["n 个元素"] --> B["n/2"]
-    A --> C["n/2"]
-    B --> D["n/4"]
-    B --> E["n/4"]
-    C --> F["n/4"]
-    C --> G["n/4"]
-    D --> H["..."]
-    D --> I["..."]
-    F --> J["..."]
-    F --> K["..."]
-    H --> L["1 个元素<br/>找到!"]
+    k["k（w 位）"] --> mul["×"]
+    a["a = A·2ʷ<br/>（w 位）"] --> mul
+    mul --> r1["r1：积的高 w 位<br/>（丢弃）"]
+    mul --> r0["r0：积的低 w 位"]
+    r0 --> h["取 r0 的最高 l 位<br/>h = r0 ≫ (w−l)"]
 
-    style L fill:#9f9,stroke:#333
-    end
+    classDef input fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef proc fill:#80DEEA,stroke:#0097A7,color:#1f1f1f
+    classDef drop fill:#EF9A9A,stroke:#C62828,color:#1f1f1f
+    classDef out fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    class k,a input
+    class mul proc
+    class r1 drop
+    class r0 proc
+    class h out
 ```
 
-#### 1.1.3 哈希表的革命性突破
+原书例子（已用代码核对）：k = 123456，w = 32，l = 14（m = 16384），a = 2654435769（Knuth 建议值）→ ka = 76300·2³² + 17612864，r0 = 17612864 的高 14 位是 **67**。
 
-**哈希表的查找**：直接通过键计算存储位置，一步到位。
-
-```
-传统查找：逐个比较 → O(n) 或 O(log n)
-哈希查找：直接计算 → O(1) 平均
-```
-
-| 数据结构 | 查找时间 | 插入时间 | 删除时间 | 空间复杂度 | 实现复杂度 |
-|---------|---------|---------|---------|-----------|-----------|
-| 无序数组 | O(n) | O(1) | O(n) | O(n) | 简单 |
-| 有序数组 | O(log n) | O(n) | O(n) | O(n) | 中等 |
-| 链表 | O(n) | O(1) | O(n) | O(n) | 简单 |
-| 平衡二叉搜索树 | O(log n) | O(log n) | O(log n) | O(n) | 复杂 |
-| **哈希表** | **O(1) 平均** | **O(1) 平均** | **O(1) 平均** | **O(n)** | **中等** |
-
-```mermaid
-flowchart TD
-    subgraph HashTableRevolution
-    A["键 Key"] -->|"一步计算<br/>h(k)"| B["数组索引"]
-    B --> C["直接访问<br/>O(1)"]
-
-    D["传统方法<br/>逐个比较"] --> E["O(n) 或 O(log n)"]
-
-    style A fill:#9ff,stroke:#333
-    style B fill:#ff9,stroke:#333
-    style C fill:#9f9,stroke:#333
-    style D fill:#f99,stroke:#333
-    end
+```java
+int multiplyShift(int k, int a, int l) {
+    return (k * a) >>> (32 - l);   // Java int 溢出即自动 mod 2^32
+}
 ```
 
-### 1.2 哈希表的形式化定义
-
-#### 1.2.1 基本概念
-
-**哈希表**是一种数据结构，它包含两个核心组件：
-
-1. **哈希函数（Hash Function）**：h: U → {0, 1, 2, ..., m-1}
-   - U 是键的宇宙（所有可能的键的集合）
-   - {0, 1, ..., m-1} 是桶数组的索引范围
-
-2. **桶数组（Bucket Array）**：T[0...m-1]
-   - 每个桶可以存储一个或多个元素
-   - 桶的数量 m 决定了哈希表的大小
-
-```mermaid
-graph LR
-    subgraph HashTableDefinition
-    A["键宇宙 U<br/>任意类型任意值"] -->|"h(k)"| B["哈希函数"]
-    B --> C["桶数组 T[0...m-1]"]
-
-    subgraph BucketArray
-    D["T[0]"] --> E["T[1]"] --> F["T[2]"] --> G["..."] --> H["T[m-1]"]
-    end
-
-    C --> D
-    C --> E
-    C --> F
-    C --> H
-    end
-
-    style A fill:#9ff,stroke:#333
-    style B fill:#ff9,stroke:#333
-    style C fill:#9f9,stroke:#333
+```python
+def multiply_shift(k, a, l, w=32):
+    return ((k * a) % (1 << w)) >> (w - l)
 ```
 
-#### 1.2.2 装载因子（Load Factor）
+### 3.5 字符串与长键：多项式滚动哈希
 
-**定义**：装载因子 α 表示哈希表中元素的填充程度
+把字符串看成「p 进制数」，用 Horner 法则边乘边取模，O(长度) 且不溢出：
 
 ```
-α = n / m
-其中：
-- n = 存储的元素数量
-- m = 桶的数量
+h(s) = (((s[0]·p + s[1])·p + s[2])·p + ... ) mod m
 ```
 
-**装载因子的意义**：
+Java 的 `String.hashCode()` 就是这个公式：**p = 31，且不取模**（int 溢出自然回绕，效果等同于 mod 2³²）。选 31 因为它是质数且 `31*x = (x<<5) - x` 能被编译器优化。
 
-| α 的范围 | 含义 | 性能影响 |
-|---------|-----|---------|
-| α < 0.5 | 稀疏 | 冲突少，查找快 |
-| α ≈ 0.75 | 适中（推荐） | 性能最优 |
-| α > 1.0 | 链地址法仍可用<br/>开放定址法失效 | 冲突频繁 |
-| α → ∞ | 性能退化 | 接近 O(n) |
+> **hashCode / equals 契约**（写 Java 必考）：`equals` 相等 ⇒ `hashCode` 必须相等；哈希冲突时靠 `equals` 在链上逐个确认。两个方法要么都重写，要么都不重写。复合键用 `Objects.hash(f1, f2, ...)`（内部就是 `31·h1 + h2` 的组合）。
 
-```mermaid
-graph LR
-    subgraph LoadFactorPerformance
-    A["α = 0.1"] --> B["查找 ≈ 1 次<br/>几乎无冲突"]
-    A --> C["α = 0.5"]
-    A --> D["α = 0.75"]
-    A --> E["α = 0.9"]
-    A --> F["α = 1.0"]
-    A --> G["α = 1.5"]
+### 3.6 全域哈希（universal hashing）：防恶意输入
 
-    C --> H["查找 ≈ 1.5 次"]
-    D --> I["查找 ≈ 2 次<br/>推荐扩容阈值"]
-    E --> J["查找 ≈ 3 次"]
-    F --> K["查找 ≈ 5 次"]
-    G --> L["查找 ≈ 8 次<br/>性能显著下降"]
+固定哈希函数的死穴：**对手若知道 h，可以故意构造 n 个全部同槽的键**，把查找拖回 Θ(n)（哈希洪水攻击）。
 
-    style A fill:#ff9,stroke:#333
-    style D fill:#9f9,stroke:#333
-    style I fill:#9f9,stroke:#333
-    style K fill:#f99,stroke:#333
-    style L fill:#f66,stroke:#333
-    end
+对策（类比快速排序的随机化）：**程序启动时从一族哈希函数里随机挑一个**，对手无法预判。函数族 H 称为**全域（universal）**，若任取两个不同的键 k1 ≠ k2，随机选 h ∈ H 时
+
 ```
+Pr[h(k1) = h(k2)] ≤ 1/m
+```
+
+**数论构造**（CLRS 式 11.3）：取质数 p 大于所有键，随机取 a ∈ {1..p−1}、b ∈ {0..p−1}，
+
+```
+h_ab(k) = ((a·k + b) mod p) mod m
+```
+
+这个族是全域的（定理 11.4），且 m 任意（不必是质数）。例：p = 17, m = 6，h₃,₄(8) = (28 mod 17) mod 6 = 11 mod 6 = **5**。
+
+**实践推荐**：multiply-shift 族（a 为随机奇数）是 **2/m-全域**的（定理 11.5）——冲突率上界放宽一倍，但算得快得多，多数场景划算。
+
+> **结论（推论 11.3）**：链地址 + 全域哈希，任意 s 个操作（含 n = O(m) 次插入）的期望总时间 Θ(s)——对手选什么键都没用。
 
 ---
 
-## 二、哈希函数设计
+## 四、冲突为什么不可避免：生日悖论
 
-### 2.1 哈希函数的本质
-
-哈希函数的核心作用是将任意类型、任意范围的键映射到有限的桶索引范围内。
-
-```mermaid
-flowchart TD
-    subgraph HashFunctionCore
-    A["输入：任意类型的键"] --> B["哈希函数 h(k)"]
-    B --> C["输出：0 到 m-1 的整数"]
-
-    A1["整数 42"] --> B
-    A2["字符串 hello"] --> B
-    A3["对象 {name: Alice}"] --> B
-    A4["浮点数 3.14"] --> B
-
-    B --> C1["0"]
-    B --> C2["1"]
-    B --> C3["..."]
-    B --> C4["m-1"]
-    end
-
-    style A fill:#9ff,stroke:#333
-    style B fill:#ff9,stroke:#333
-    style C fill:#9f9,stroke:#333
-```
-
-### 2.2 好的哈希函数应该具备什么特性？
-
-#### 2.2.1 确定性（Determinism）
-
-**定义**：相同的键必须映射到相同的桶。
-
-```java
-// ✅ 正确的实现
-int hash(String key) {
-    return key.hashCode();  // 相同的字符串产生相同的哈希值
-}
-
-// ❌ 错误的实现
-int hash(String key) {
-    return Random.nextInt(m);  // 每次调用结果不同！
-}
-```
-
-#### 2.2.2 均匀性（Uniformity）
-
-**定义**：哈希函数应该将键均匀分布到所有桶中，避免某些桶过于拥挤。
-
-**数学期望**：对于任意桶 i，期望的链表长度为 α = n/m
+著名反直觉事实：**23 个人的群体，至少两人同天生日的概率超过 50%**。翻译成哈希语言：365 个槽、随机插入 23 个键，冲突概率已经过半。
 
 ```
-E[length(bucket i)] = n/m = α
+P(至少一次冲突) ≈ 1 − e^(−n²/2m)
+P = 50% 时  n ≈ √(2m·ln2) ≈ 1.18·√m
 ```
 
-**均匀性的重要性**：
-
-```mermaid
-graph TD
-    subgraph UniformityComparison
-
-    subgraph GoodHash
-    A1["A"] --> B1["桶1"]
-    A2["B"] --> B2["桶2"]
-    A3["C"] --> B3["桶3"]
-    A4["D"] --> B4["桶4"]
-    end
-
-    subgraph BadHash
-    C1["A"] --> D1["桶1"]
-    C2["B"] --> D1
-    C3["C"] --> D2["桶2"]
-    C4["D"] --> D3["桶3"]
-    C5["E"] --> D3
-    C6["F"] --> D4["桶4"]
-    end
-
-    end
-
-    style B1 fill:#9f9,stroke:#333
-    style B2 fill:#9f9,stroke:#333
-    style B3 fill:#9f9,stroke:#333
-    style B4 fill:#9f9,stroke:#333
-    style D1 fill:#f99,stroke:#333
-    style D3 fill:#f99,stroke:#333
-```
-
-#### 2.2.3 高效性（Efficiency）
-
-**定义**：计算哈希值应该是 O(1) 时间复杂度。
-
-#### 2.2.4 雪崩效应（Avalanche Effect）
-
-**定义**：输入的微小变化应该导致哈希值的巨大变化。
-
-```java
-// 雪崩效应的例子
-"hello".hashCode()  // 99162322
-"hella".hashCode()  // 应该与 99162322 完全不同
-"hello world".hashCode()  // 也应该完全不同
-```
-
-### 2.3 整数键的哈希函数
-
-#### 2.3.1 除法哈希法（Division Method）
-
-**公式**：
-```
-h(k) = k mod m
-```
-
-**选择 m 的原则**：
-1. m 应该是质数（prime number）
-2. m 不应该接近 2 的幂
-3. m 通常取 2 的幂附近的质数（如 1024 → 997, 2048 → 2003）
-
-**为什么选择质数？**
-
-```mermaid
-flowchart LR
-    subgraph PrimeVsComposite
-    A["假设有周期性输入序列"] --> B["除数 m = 8（合数）"]
-    A --> C["除数 m = 7（质数）"]
-
-    B --> D["输入: 1, 9, 17, 25, 33..."]
-    D --> E["k mod 8: 1, 1, 1, 1, 1..."]
-    E --> F["所有键映射到同一桶!"]
-    style F fill:#f66,stroke:#333
-
-    C --> G["输入: 1, 9, 17, 25, 33..."]
-    G --> H["k mod 7: 1, 2, 3, 4, 5..."]
-    H --> I["键均匀分布"]
-    style I fill:#9f9,stroke:#333
-    end
-```
-
-**完整实现（除法哈希法）**：
-
-```java
-/**
- * 除法哈希函数
- *
- * 原理：h(k) = k mod m
- * 关键点：m 应该是质数
- */
-public class DivisionHashFunction {
-    private final int m;  // 桶的数量
-
-    public DivisionHashFunction(int m) {
-        if (!isPrime(m)) {
-            throw new IllegalArgumentException("m 应该是质数，建议值：" + findNearestPrime(m));
-        }
-        this.m = m;
-    }
-
-    /**
-     * 计算哈希值
-     * @param key 整数键
-     * @return 桶索引 [0, m-1]
-     */
-    public int hash(int key) {
-        // 处理负数：取绝对值后取模
-        return Math.abs(key) % m;
-    }
-
-    public int hash(long key) {
-        return (int) (Math.abs(key) % m);
-    }
-
-    /**
-     * 判断是否为质数
-     */
-    public static boolean isPrime(int n) {
-        if (n < 2) return false;
-        if (n == 2) return true;
-        if (n % 2 == 0) return false;
-
-        // 只需检查到 sqrt(n)
-        int sqrt = (int) Math.sqrt(n);
-        for (int i = 3; i <= sqrt; i += 2) {
-            if (n % i == 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * 找到最接近的质数
-     */
-    public static int findNearestPrime(int n) {
-        if (n <= 1) return 2;
-
-        int candidate = n;
-        while (!isPrime(candidate)) {
-            candidate++;
-        }
-        return candidate;
-    }
-
-    @Override
-    public String toString() {
-        return "DivisionHashFunction(m=" + m + ")";
-    }
-}
-```
-
-#### 2.3.2 乘法哈希法（Multiplication Method）
-
-**公式**：
-```
-h(k) = floor(m × (k × A mod 1))
-其中 A 是常数，0 < A < 1
-```
-
-**黄金分割比例**：A = (√5 - 1) / 2 ≈ 0.618033988749895
-
-**为什么选择黄金分割比例？**
-- 黄金分割比例是一个"无理数"
-- 任何数与无理数相乘后取小数部分，分布更均匀
-- Knuth 推荐使用这个值
-
-```mermaid
-flowchart TD
-    subgraph MultiplicationHash
-    A["k × A"] --> B["取小数部分<br/>k × A mod 1"]
-    B --> C["乘以 m<br/>m × (k × A mod 1)"]
-    C --> D["向下取整<br/>h(k) = ⌊m × (k × A mod 1)⌋"]
-    end
-
-    subgraph GoldenRatio
-    E["√5 ≈ 2.618"] --> F["A = (√5 - 1)/2 ≈ 0.618"]
-    F --> G["与任何数相乘后<br/>小数部分分布极均匀"]
-    end
-
-    style A fill:#9ff,stroke:#333
-    style B fill:#ff9,stroke:#333
-    style C fill:#f99,stroke:#333
-    style D fill:#9f9,stroke:#333
-```
-
-**完整实现（乘法哈希法）**：
-
-```java
-import java.math.BigDecimal;
-
-/**
- * 乘法哈希函数
- *
- * 原理：h(k) = floor(m × (k × A mod 1))
- * 优点：对 m 的选择不敏感
- */
-public class MultiplicationHashFunction {
-    private final int m;  // 桶的数量
-    private final double A;  // 常数
-
-    /**
-     * 使用默认的黄金分割比例
-     */
-    public MultiplicationHashFunction(int m) {
-        this(m, (Math.sqrt(5) - 1) / 2);
-    }
-
-    /**
-     * 使用指定的 A 值
-     * @param m 桶的数量
-     * @param A 常数，0 < A < 1
-     */
-    public MultiplicationHashFunction(int m, double A) {
-        if (m <= 0) {
-            throw new IllegalArgumentException("m 必须大于 0");
-        }
-        if (A <= 0 || A >= 1) {
-            throw new IllegalArgumentException("A 必须在 (0, 1) 范围内");
-        }
-        this.m = m;
-        this.A = A;
-    }
-
-    /**
-     * 计算哈希值
-     */
-    public int hash(int key) {
-        // k × A mod 1 的精确计算
-        double product = key * A;
-        double fractional = product - Math.floor(product);
-        return (int) (m * fractional);
-    }
-
-    public int hash(long key) {
-        double product = key * A;
-        double fractional = product - Math.floor(product);
-        return (int) (m * fractional);
-    }
-
-    /**
-     * 使用 BigDecimal 提高精度（防止浮点误差）
-     */
-    public int hashPrecise(long key) {
-        BigDecimal k = BigDecimal.valueOf(key);
-        BigDecimal a = BigDecimal.valueOf(A);
-        BigDecimal mDec = BigDecimal.valueOf(m);
-
-        BigDecimal product = k.multiply(a);
-        BigDecimal fractional = product.remainder(BigDecimal.ONE);
-        BigDecimal result = mDec.multiply(fractional);
-
-        return result.intValue();
-    }
-
-    @Override
-    public String toString() {
-        return String.format("MultiplicationHashFunction(m=%d, A=%.10f)", m, A);
-    }
-}
-```
-
-#### 2.3.3 乘法哈希 vs 除法哈希
-
-| 特性 | 乘法哈希 | 除法哈希 |
-|-----|---------|---------|
-| 对 m 的敏感度 | 不敏感 | 敏感 |
-| m 的选择 | 任意 2 的幂 | 质数 |
-| 计算复杂度 | 涉及浮点运算 | 简单的取模 |
-| 均匀性 | 非常好 | 好（需质数） |
-| 适用场景 | m 不固定或需频繁调整 | m 相对固定 |
-
-### 2.4 字符串键的哈希函数
-
-#### 2.4.1 多项式哈希函数（Polynomial Hash Function）
-
-**公式**（Horner's Method）：
-```
-h(s) = Σ(s[i] × p^(n-1-i)) mod m
-    = (((s[0] × p + s[1]) × p + s[2]) × p + ...) mod m
-```
-
-**直观理解**：
-```
-"abc" = 97 × p² + 98 × p¹ + 99 × p⁰
-```
-
-**Java 实现（逐字符计算）**：
-
-```java
-/**
- * 字符串多项式哈希函数
- *
- * h(s) = Σ(s[i] × p^(n-1-i)) mod m
- *     = (((s[0] × p + s[1]) × p + s[2]) × p + ...) mod m
- */
-public class StringHashFunction {
-    private final int m;      // 模数
-    private final int base;   // 基数
-
-    public StringHashFunction(int m, int base) {
-        this.m = m;
-        this.base = base;
-    }
-
-    /**
-     * 计算字符串的哈希值
-     */
-    public int hash(String s) {
-        if (s == null || s.isEmpty()) {
-            return 0;
-        }
-
-        int hashValue = 0;
-        for (int i = 0; i < s.length(); i++) {
-            // 使用 Horner's method 避免溢出
-            hashValue = (hashValue * base + s.charAt(i)) % m;
-        }
-
-        return hashValue;
-    }
-
-    /**
-     * 详细展示计算过程
-     */
-    public String hashVerbose(String s) {
-        if (s == null || s.isEmpty()) {
-            return "空字符串 -> 0";
-        }
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("'").append(s).append("' 的哈希计算过程:\n");
-
-        int hashValue = 0;
-        for (int i = 0; i < s.length(); i++) {
-            int oldHash = hashValue;
-            char c = s.charAt(i);
-            hashValue = (hashValue * base + c) % m;
-            sb.append(String.format("h = (%d × %d + %d) mod %d = %d\n",
-                    oldHash, base, (int) c, m, hashValue));
-        }
-
-        sb.append(String.format("最终结果: %d", hashValue));
-        return sb.toString();
-    }
-
-    /**
-     * 演示雪崩效应
-     */
-    public void demoAvalancheEffect() {
-        String[] testStrings = {"hello", "hella", "hellb", "world"};
-        System.out.println("\n【雪崩效应验证】");
-        for (String s : testStrings) {
-            System.out.println(String.format("  '%s' -> %d", s, hash(s)));
-        }
-    }
-
-    /**
-     * 演示完整计算过程
-     */
-    public void demoAll() {
-        System.out.println("=".repeat(60));
-        System.out.println("字符串哈希函数演示");
-        System.out.println("=".repeat(60));
-
-        // 单字符
-        System.out.println("\n【单字符】");
-        System.out.println(hashVerbose("a"));
-
-        // 多字符
-        System.out.println("\n【多字符】");
-        System.out.println(hashVerbose("ab"));
-
-        // 完整字符串
-        System.out.println("\n【完整字符串】");
-        System.out.println(hashVerbose("abc"));
-
-        // 雪崩效应
-        demoAvalancheEffect();
-    }
-
-    public static void main(String[] args) {
-        StringHashFunction hf = new StringHashFunction(1000, 31);
-        hf.demoAll();
-    }
-}
-```
-
-**输出示例**：
-```
-============================================================
-字符串哈希函数演示
-============================================================
-
-【单字符】
-'a' 的哈希计算过程:
-h = (0 × 31 + 97) mod 1000 = 97
-最终结果: 97
-
-【多字符】
-'ab' 的哈希计算过程:
-h = (0 × 31 + 97) mod 1000 = 97
-h = (97 × 31 + 98) mod 1000 = (3007 + 98) mod 1000 = 105
-最终结果: 105
-
-【完整字符串】
-'abc' 的哈希计算过程:
-h = (0 × 31 + 97) mod 1000 = 97
-h = (97 × 31 + 98) mod 1000 = 105
-h = (105 × 31 + 99) mod 1000 = (3255 + 99) mod 1000 = 354
-最终结果: 354
-
-【雪崩效应验证】
-  'hello' -> 532
-  'hella' -> 876   // 微小变化，哈希值完全不同
-  'hellb' -> 907
-  'world' -> 215
-```
-
-#### 2.4.2 Java String.hashCode() 解析
-
-Java 内置的 `String.hashCode()` 使用的就是多项式哈希函数：
-
-```java
-// Java 8 String.hashCode() 源码
-public int hashCode() {
-    int h = hash;  // 缓存的哈希值
-    if (h == 0 && value.length > 0) {
-        char[] val = value;
-        for (int i = 0; i < value.length; i++) {
-            h = 31 * h + val[i];
-        }
-        hash = h;
-    }
-    return h;
-}
-```
-
-**特点**：
-- 基数为 31（质数，能减少碰撞）
-- 没有取模操作（可能溢出，由 Java 自动处理）
-- 缓存哈希值，避免重复计算
-
-### 2.5 复合键的哈希函数
-
-当键是复合类型（如 Point(x, y)、Person(name, age)）时，需要组合各部分的哈希值。
-
-```mermaid
-flowchart TD
-    subgraph CompositeKeyHash
-    A["复合键<br/>如: (x, y)"] --> B["分别计算各部分哈希"]
-    B --> C["h(x)"]
-    B --> D["h(y)"]
-    C --> E["组合策略"]
-    D --> E
-
-    E --> F["异或组合<br/>h(x) ⊕ h(y)"]
-    E --> G["多项式组合<br/>h(x) × p + h(y)"]
-    E --> H["JDK 风格<br/>31 × h(x) + h(y)"]
-    end
-
-    style A fill:#9ff,stroke:#333
-    style F fill:#9f9,stroke:#333
-    style G fill:#9f9,stroke:#333
-    style H fill:#9f9,stroke:#333
-```
-
-**实现示例**：
-
-```java
-/**
- * 复合键哈希函数组合器
- */
-public class CompositeHash {
-
-    /**
-     * 方法1：异或组合
-     * 优点：简单高效
-     * 缺点：可能丢失信息 (a, b) 和 (b, a) 哈希相同
-     */
-    public static int xorCombine(int h1, int h2) {
-        return h1 ^ h2;
-    }
-
-    /**
-     * 方法2：多项式组合（类似 String.hashCode）
-     * 优点：顺序敏感，(a, b) ≠ (b, a)
-     * 缺点：需要选择合适的基数
-     */
-    public static int polynomialCombine(int h1, int h2) {
-        return 31 * h1 + h2;
-    }
-
-    /**
-     * 方法3：JDK 风格组合
-     * 处理更多字段
-     */
-    public static int combine(int... hashes) {
-        int result = 0;
-        for (int h : hashes) {
-            result = 31 * result + h;
-        }
-        return result;
-    }
-
-    /**
-     * 示例：二维点的哈希函数
-     */
-    public static class Point2D {
-        private final int x;
-        private final int y;
-
-        public Point2D(int x, int y) {
-            this.x = x;
-            this.y = y;
-        }
-
-        @Override
-        public int hashCode() {
-            // 使用组合器
-            return polynomialCombine(x, y);
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (this == obj) return true;
-            if (obj == null || getClass() != obj.getClass()) return false;
-            Point2D other = (Point2D) obj;
-            return x == other.x && y == other.y;
-        }
-    }
-
-    /**
-     * 示例：人的哈希函数（姓名 + 年龄）
-     */
-    public static class Person {
-        private final String name;
-        private final int age;
-
-        public Person(String name, int age) {
-            this.name = name;
-            this.age = age;
-        }
-
-        @Override
-        public int hashCode() {
-            // 组合字符串哈希和整数哈希
-            int nameHash = name.hashCode();
-            return polynomialCombine(nameHash, age);
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (this == obj) return true;
-            if (obj == null || getClass() != obj.getClass()) return false;
-            Person other = (Person) obj;
-            return age == other.age && name.equals(other.name);
-        }
-    }
-}
-```
-
-### 2.6 全局哈希（Universal Hashing）
-
-#### 2.6.1 为什么需要全局哈希？
-
-**固定哈希函数的问题**：
-- 恶意输入可以导致所有键映射到同一桶
-- 攻击者可以构造最坏情况的输入
-
-**解决方案**：从哈希函数族中随机选择哈希函数
-
-```mermaid
-flowchart TD
-    subgraph UniversalHashing
-    A["固定哈希函数"] --> B["可能被攻击"]
-    B --> C["恶意输入 → 全部冲突<br/>O(n) 退化为 O(1)"]
-    B --> D["安全漏洞"]
-
-    E["全局哈希"] --> F["随机选择"]
-    F --> G["无法预测<br/>平均情况保证"]
-    end
-
-    style A fill:#f99,stroke:#333
-    style B fill:#f66,stroke:#333
-    style E fill:#9f9,stroke:#333
-    style F fill:#9ff,stroke:#333
-```
-
-#### 2.6.2 全局哈希函数族
-
-**乘法形式的全局哈希函数族**：
-
-```
-H = { h_{a,b}(k) = ((a × k + b) mod p) mod m }
-
-约束条件：
-- p 是大于所有键的质数
-- a ∈ {1, 2, ..., p-1}
-- b ∈ {0, 1, ..., p-1}
-```
-
-**性质**：对于任意两个不同的键 k₁ ≠ k₂，冲突概率 ≤ 1/m
-
-```java
-import java.util.Random;
-
-/**
- * 全局哈希函数实现
- *
- * H = { h_{a,b}(k) = ((a × k + b) mod p) mod m }
- */
-public class UniversalHashFunction {
-    private final int p;  // 大于所有键的质数
-    private final int a;  // 随机系数 [1, p-1]
-    private final int m;  // 桶数量
-
-    public UniversalHashFunction(int p, int m) {
-        if (!isPrime(p)) {
-            throw new IllegalArgumentException("p 必须是质数");
-        }
-        if (m <= 0) {
-            throw new IllegalArgumentException("m 必须大于 0");
-        }
-
-        this.p = p;
-        this.m = m;
-
-        // 随机选择 a
-        Random rand = new Random();
-        this.a = rand.nextInt(p - 1) + 1;  // [1, p-1]
-        this.b = rand.nextInt(p);           // [0, p-1]
-    }
-
-    private final int b;  // 随机偏移量
-
-    /**
-     * 计算全局哈希值
-     */
-    public int hash(int key) {
-        // ((a × k + b) mod p) mod m
-        long temp = ((long) a * key + b) % p;
-        return (int) (temp % m);
-    }
-
-    /**
-     * 计算长整型的全局哈希值
-     */
-    public long hash(long key) {
-        long temp = ((long) a * key + b) % p;
-        return temp % m;
-    }
-
-    /**
-     * 重新随机选择哈希函数
-     */
-    public void randomize() {
-        Random rand = new Random();
-        this.a = rand.nextInt(p - 1) + 1;
-        this.b = rand.nextInt(p);
-    }
-
-    public static boolean isPrime(int n) {
-        if (n < 2) return false;
-        if (n == 2) return true;
-        if (n % 2 == 0) return false;
-        int sqrt = (int) Math.sqrt(n);
-        for (int i = 3; i <= sqrt; i += 2) {
-            if (n % i == 0) return false;
-        }
-        return true;
-    }
-
-    @Override
-    public String toString() {
-        return String.format("UniversalHash(p=%d, a=%d, b=%d, m=%d)", p, a, b, m);
-    }
-}
-```
+| m（槽数） | n = √m 时冲突概率 | 冲突率达 50% 的 n |
+|-----------|------------------|-------------------|
+| 365 | ≈ 39% | 23（生日悖论本尊） |
+| 1 000 | ≈ 39% | 38 |
+| 1 000 000 | ≈ 39% | 1 178 |
+
+（已用精确公式 `1 − Π(m−i)/m` 数值核对。）**记住量级：插入约 √m 个键就很可能有冲突**。所以「冲突解决」不是边角料，而是哈希表的核心设计。
 
 ---
 
-## 三、哈希冲突的必然性
+## 五、链地址法（chaining，§11.2）
 
-### 3.1 生日悖论与哈希冲突
+### 5.1 结构与操作
 
-**生日悖论**：在一个23人的群体中，至少两人同一天生日的概率超过50%。
-
-```mermaid
-flowchart LR
-    subgraph BirthdayParadox
-    A["23 人"] --> B["任意两人<br/>同一天生日概率"]
-    B --> C["> 50%"]
-
-    D["365 天<br/>哈希表桶数"] --> E["√365 ≈ 19<br/>插入 19 个元素"]
-    E --> F["冲突概率 ≈ 50%"]
-    end
-
-    style C fill:#ff9,stroke:#333
-    style F fill:#ff9,stroke:#333
-```
-
-### 3.2 哈希冲突的数学分析
-
-**碰撞概率公式**：
-
-```
-P(至少一次碰撞) = 1 - P(无碰撞)
-                = 1 - (m × (m-1) × (m-2) × ... × (m-n+1)) / m^n
-```
-
-**近似公式**（当 n << m 时）：
-
-```
-P(碰撞) ≈ 1 - e^(-n²/2m)
-```
-
-**当 n = √m 时**：
-
-```
-P(碰撞) ≈ 1 - e^(-1/2) ≈ 1 - 0.606 = 0.394 ≈ 40%
-```
-
-```mermaid
-graph TD
-    subgraph CollisionProbability
-    A["n = √m<br/>约 19% 的桶被占用"] --> B["冲突概率 ≈ 40%"]
-    A --> C["n = 2√m<br/>约 53% 的桶被占用"]
-    C --> D["冲突概率 ≈ 86%"]
-    A --> E["n = 3√m<br/>约 79% 的桶被占用"]
-    E --> F["冲突概率 ≈ 99%"]
-    end
-
-    style B fill:#ff9,stroke:#333
-    style D fill:#f99,stroke:#333
-    style F fill:#f66,stroke:#333
-```
-
-**Java 可视化冲突概率**：
-
-```java
-import java.util.ArrayList;
-import java.util.List;
-
-/**
- * 哈希冲突概率计算器
- *
- * 精确公式：P(碰撞) = 1 - (m × (m-1) × ... × (m-n+1)) / m^n
- * 近似公式：P(碰撞) ≈ 1 - e^(-n²/2m)
- */
-public class CollisionProbabilityCalculator {
-
-    /**
-     * 精确计算冲突概率
-     */
-    public static double exact(int n, int m) {
-        if (n > m) {
-            return 1.0;
-        }
-
-        // 精确计算 P(无冲突)
-        double probNoCollision = 1.0;
-        for (int i = 0; i < n; i++) {
-            probNoCollision *= (double) (m - i) / m;
-        }
-
-        return 1.0 - probNoCollision;
-    }
-
-    /**
-     * 近似公式：P(碰撞) ≈ 1 - e^(-n²/2m)
-     */
-    public static double approx(int n, int m) {
-        if (n == 0) {
-            return 0.0;
-        }
-        return 1.0 - Math.exp(-(double) n * n / (2 * m));
-    }
-
-    /**
-     * 找到冲突概率达到 50% 时的 n 值
-     */
-    public static int findNFor50Percent(int m) {
-        for (int n = 1; n <= m; n++) {
-            if (exact(n, m) >= 0.5) {
-                return n;
-            }
-        }
-        return m;
-    }
-
-    /**
-     * 演示冲突概率计算
-     */
-    public static void main(String[] args) {
-        int m = 1000;  // 桶数量
-
-        System.out.println("=".repeat(60));
-        System.out.println("哈希冲突概率分析");
-        System.out.println("=".repeat(60));
-
-        // 计算不同 n 值的冲突概率
-        int[] testNs = {10, 20, 30, 40};
-        System.out.println("\n精确 vs 近似公式对比：");
-        System.out.println("n\t精确概率\t近似概率");
-        System.out.println("-".repeat(40));
-        for (int n : testNs) {
-            double exactProb = exact(n, m);
-            double approxProb = approx(n, m);
-            System.out.printf("%d\t%.4f\t\t%.4f%n", n, exactProb, approxProb);
-        }
-
-        // 找到冲突概率达到 50% 的 n
-        int n50 = findNFor50Percent(m);
-        System.out.println("\n" + "=".repeat(60));
-        System.out.println("关键结论：");
-        System.out.printf("桶数量 m = %d%n", m);
-        System.out.printf("当 n = %d 时，冲突概率达到 50%%%n", n50);
-        System.out.printf("√m = %d%n", (int) Math.sqrt(m));
-        System.out.printf("结论：冲突概率达到 50%% 时的 n ≈ √m%n");
-    }
-}
-```
-
-**输出示例**：
-```
-============================================================
-哈希冲突概率分析
-============================================================
-
-精确 vs 近似公式对比：
-n      精确概率      近似概率
-----------------------------------------
-10     0.0955       0.0488
-20     0.3324       0.2642
-30     0.5954       0.5286
-40     0.7942       0.7534
-
-============================================================
-关键结论：
-桶数量 m = 1000
-当 n = 38 时，冲突概率达到 50%
-√m = 31
-结论：冲突概率达到 50% 时的 n ≈ √m
-```
-
----
-
-## 四、冲突解决策略
-
-### 4.1 链地址法（Separate Chaining）
-
-#### 4.1.1 核心思想
-
-**链地址法**：每个桶存储一个链表，所有映射到同一桶的元素都放入该链表中。
+**思想**：同槽的元素串成一条链表，槽里只存链表头指针。可以把它看成「非递归版分治」：哈希函数把 n 个元素随机分成 m 组，每组近似 n/m 个，各组独立用链表管理。
 
 ```mermaid
 graph LR
-    subgraph ChainingStructure
-
-    K1["key1<br/>h(key1)=3"] --> H1["哈希函数"]
-    K2["key2<br/>h(key2)=7"] --> H2["哈希函数"]
-    K3["key3<br/>h(key3)=3"] --> H1
-    K4["key4<br/>h(key4)=3"] --> H1
-
-    H1 --> B3["桶[3]<br/>key1 → key3 → key4"]
-    H2 --> B7["桶[7]<br/>key2"]
-
-    subgraph Bucket3Chain
-    N1["key1"] --> N2["key3"]
-    N2 --> N3["key4"]
-    N3 --> Null1["null"]
+    subgraph T["桶数组 T[0..m-1]"]
+      t0["T[0]"]
+      t1["T[1]"]
+      t2["T[2]"]
+      t3["T[3]"]
     end
+    t0 --> n1["k1"] --> n4["k4"] --> nil1["NIL"]
+    t1 --> nil2["NIL"]
+    t2 --> n2["k2"] --> n5["k5"] --> n7["k7"] --> nil3["NIL"]
+    t3 --> n3["k3"] --> nil4["NIL"]
 
-    subgraph Bucket7Chain
-    N7["key2"] --> Null2["null"]
-    end
-
-    style H1 fill:#ff9,stroke:#333
-    style H2 fill:#ff9,stroke:#333
-    style B3 fill:#9f9,stroke:#333
-    style B7 fill:#9f9,stroke:#333
-    end
+    classDef slot fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    classDef key fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef nil fill:#EF9A9A,stroke:#C62828,color:#1f1f1f
+    class t0,t1,t2,t3 slot
+    class n1,n4,n2,n5,n7,n3 key
+    class nil1,nil2,nil3,nil4 nil
 ```
 
-#### 4.1.2 Java 完整实现
+伪代码（复用第 10 章的链表操作）：
+
+```
+CHAINED-HASH-INSERT(T, x)   LIST-PREPEND(T[h(x.key)], x)      // 头插
+CHAINED-HASH-SEARCH(T, k)   return LIST-SEARCH(T[h(k)], k)
+CHAINED-HASH-DELETE(T, x)   LIST-DELETE(T[h(x.key)], x)       // 给的是元素指针
+```
+
+- **插入 O(1)** 最坏（头插；若要求「键已存在则不插」，需先查找）。
+- **删除 O(1)** 最坏——前提是**双向链表**且已知元素指针；只有单链表时删除退化为查找同款 O(链长)。
+- **查找**正比于链长，是分析的重点。
+
+### 5.2 装载因子与平均性能
+
+**装载因子 α = n/m**（平均每条链的长度；α 可以小于、等于或大于 1）。
+
+| 操作 | 最坏 | 平均（独立均匀哈希假设） |
+|------|------|--------------------------|
+| 插入 | O(1) | O(1) |
+| 删除（双向链 + 元素指针） | O(1) | O(1) |
+| 查找（成功或失败） | Θ(n)（全部同槽） | **Θ(1 + α)** |
+
+结论的含义（定理 11.1 / 11.2）：只要 **n = O(m)**（α 是常数），所有字典操作平均 O(1)。成功查找的精确期望是 `1 + α/2 − α/(2n)`——比失败查找略省，因为目标元素必然在某个非空链上。
+
+> 习题 11.2-3（Marley 教授）：把每条链改成**有序**——成功/失败查找、删除的渐进复杂度不变（失败查找可提前停但只是常数收益），插入却从 O(1) 变 Θ(1+α)。**不划算**。
+
+### 5.3 一次完整插入示例（习题 11.2-2，已用代码核对）
+
+m = 9，h(k) = k mod 9，依次插入 5, 28, 19, 15, 20, 33, 12, 17, 10（头插法，新元素在链首）：
+
+| 槽 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|----|---|---|---|---|---|---|---|---|---|
+| 链 | NIL | 10→19→28 | 20 | 12 | NIL | 5 | 33→15 | NIL | 17 |
+
+---
+
+## 六、开放定址法（open addressing，§11.4）
+
+### 6.1 核心思想
+
+所有元素都躺在表本身里：**没有链表、没有指针**。冲突了，就按某个由键决定的**探测序列**挨个找下一个槽。省下的指针空间让同样的内存能开更多槽、冲突更少；而且连续探测对 CPU 缓存友好（§6.6）。
+
+哈希函数升级为带探测序号：`h: U × {0,1,...,m−1} → {0,1,...,m−1}`，要求对每个键，探测序列 `⟨h(k,0), h(k,1), ..., h(k,m−1)⟩` 是 {0..m−1} 的一个**排列**（保证表满之前总能找到空槽）。注意开放定址的 **α ≤ 1**。
+
+```
+HASH-INSERT(T, k)                HASH-SEARCH(T, k)
+  i = 0                            i = 0
+  repeat                           repeat
+    q = h(k, i)                      q = h(k, i)
+    if T[q] == NIL                   if T[q] == k
+      T[q] = k                         return q
+      return q                       i = i + 1
+    else i = i + 1                 until T[q] == NIL or i == m
+  until i == m                     return NIL
+  error "hash table overflow"
+```
+
+查找能提前终止的原理：k 的查找路径与当初插入路径完全相同，**遇到空槽说明 k 当初就该放这里——它不在表里**。
+
+### 6.2 三种探测方式
+
+| 方式 | 公式 | 探测序列（起点 p = h₁(k)） | 不同序列数 | 问题 |
+|------|------|---------------------------|-----------|------|
+| 线性探测 | h(k,i) = (h₁(k) + i) mod m | p, p+1, p+2, ... | 仅 m 种 | **一次聚集**：连续占用段像滚雪球 |
+| 二次探测 | h(k,i) = (h₁(k) + c₁i + c₂i²) mod m | p, p+c₁+c₂, p+2c₁+4c₂, ... | m 种 | 常数选不好会漏探槽（不能覆盖全表） |
+| 双重哈希 | h(k,i) = (h₁(k) + i·h₂(k)) mod m | p, p+h₂, p+2h₂, ... | Θ(m²) 种 | 要求 **h₂(k) 与 m 互质** |
+
+- 线性探测就是 h₂(k) ≡ 1 的双重哈希。
+- 保证互质的两种实用方案：**m 取 2 的幂 + h₂(k) 恒为奇数**；或 **m 取质数 + h₂(k) ∈ [1, m−1]**，例如 `h₁(k) = k mod m`，`h₂(k) = 1 + (k mod (m−1))`。
+- 双重哈希的 Θ(m²) 个序列最接近理想的「均匀排列哈希」（m! 个），实践表现最好。
+
+### 6.3 双重哈希示例（CLRS 图 11.5，已用代码核对）
+
+m = 13，h₁(k) = k mod 13，h₂(k) = 1 + (k mod 11)。依次插入 79, 69, 72, 98, 50：
+
+| 槽 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+|----|---|---|---|---|---|---|---|---|---|---|----|----|----|
+| 键 | — | 79 | — | — | 69 | 98 | — | 72 | — | — | — | 50 | — |
+
+（98：h₁ = 7 被 72 占，步长 h₂ = 11，(7+11) mod 13 = 5，落槽 5。）
+
+再插入 **14**：h₁(14) = 1（被 79 占），h₂(14) = 4 → 槽 5（被 98 占）→ 槽 **9**（空，落位）。探测路径 1 → 5 → 9。
+
+### 6.4 删除：开放定址的阿喀琉斯之踵
+
+**不能直接置 NIL**——那会切断别人的查找链（见 §6.1 的终止原理）。
+
+**方案一：DELETED 墓碑**。删除时置特殊标记；查找跳过它继续探测，插入遇到它可以复用。代价：查找时间不再只取决于 α（墓碑也挡路），墓碑多了要整体重哈希清理。**需要频繁删除时，书上建议直接用链地址法。**
+
+**方案二：线性探测专属的无墓碑删除**（§11.5.1，第四版新增）。线性探测的所有键沿同一方向循环探测，删除后可以**把后面的键往前挪**填补空缺。判据：槽 q 空出来后，后续槽 q′ 里的键 k′ 需要前移，当且仅当 `g(k′, q) < g(k′, q′)`（其中 `g(k, q) = (q − h₁(k)) mod m` 是「到达槽 q 的探测序号」——即插入 k′ 时槽 q 曾被探测过）。
+
+```
+LINEAR-PROBING-HASH-DELETE(T, q)
+  while TRUE
+    T[q] = NIL                       // 腾出槽 q
+    q′ = q
+    repeat
+      q′ = (q′ + 1) mod m            // 线性探测找下一个键
+      k′ = T[q′]
+      if k′ == NIL
+        return                       // 遇到空槽结束
+    until g(k′, q) < g(k′, q′)       // k′ 插入时曾路过槽 q？
+    T[q] = k′                        // 前移填补
+    q = q′                           // q′ 成为新的空缺
+```
+
+示例（CLRS 图 11.6，已用代码核对）：m = 10，h₁(k) = k mod 10，插入 74, 43, 93, 18, 82, 38, 92 后删除槽 3 的 43——**93 从槽 5 前移到 3，92 从槽 6 前移到 5**，其余不动：
+
+| 槽 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|----|---|---|---|---|---|---|---|---|---|---|
+| 删除前 | — | — | 82 | **43** | 74 | 93 | 92 | — | 18 | 38 |
+| 删除后 | — | — | 82 | **93** | 74 | **92** | — | — | 18 | 38 |
+
+（验证：93 原本 mod 10 = 3，槽 3 空出后若不挪它就再也找不到它。）
+
+### 6.5 开放定址的平均性能
+
+理想假设升级为**独立均匀排列哈希**：每个键的探测序列等概率是 m! 个排列之一。且假设无删除、α < 1。
+
+| 操作 | 期望探测次数上界 | α = 0.5 | α = 0.75 | α = 0.9 |
+|------|------------------|---------|----------|---------|
+| 失败查找 / 插入（定理 11.6、推论 11.7） | **1/(1−α)** | 2 | 4 | 10 |
+| 成功查找（定理 11.8） | **(1/α)·ln(1/(1−α))** | 1.387 | 1.848 | 2.559 |
+
+直觉（把证明浓缩成一句话）：第一次探测必发生；以概率 ≈ α 撞上占用槽才有第二次；以概率 ≈ α² 才有第三次……期望 ≈ 1 + α + α² + ⋯ = 1/(1−α)。
+
+> α 越接近 1，失败查找爆炸得越快（0.9 → 10 次，0.99 → 100 次）。**这就是开放定址实现里 α 上限常取 0.7~0.75 的原因。**
+
+### 6.6 一次聚集与缓存：理论 vs 实践的反转
+
+线性探测的软肋是**一次聚集（primary clustering）**：长占用段越长越容易变长（空槽前面有 i 个占用槽时，它被下一个元素占中的概率是 (i+1)/m），平均查找被拖长。理论上双重哈希更优。
+
+但第四版 §11.5 指出实践反转：**线性探测的连续探测基本落在同一缓存块里**，而双重哈希每次探测都可能换缓存行。配一个足够随机的哈希函数（定理 11.9：h₁ 为 5-独立且 α ≤ 2/3 时，线性探测期望常数时间，操作时间 O(1/ε²)，α = 1−ε），线性探测在现代分层内存机器上反而常是最快的选择。这也是 Python dict、许多高性能哈希表采用开放定址的原因。
+
+---
+
+## 七、再哈希与动态扩容
+
+装载因子超过阈值（链地址常取 0.75，开放定址常取 0.7~0.75）时，开一张约 2 倍大的新表，把所有键**重新计算槽位**搬过去（键的哈希值随 m 变化，无法整体平移）。
+
+**均摊 O(1)**：容量翻倍意味着两次扩容之间至少又插入了 Θ(m) 个元素；把扩容的 O(m) 平摊到它们头上，每次插入只多出 O(1)。几何级数 1 + 2 + 4 + ⋯ + n < 2n 一句话说清。
+
+### 链地址 vs 开放定址
+
+| 特性 | 链地址法 | 开放定址法 |
+|------|----------|------------|
+| 存储 | 槽数组 + 链表节点（额外指针） | 纯数组 |
+| α 限制 | 可 > 1 | 必须 < 1 |
+| 删除 | 简单 O(1)（双向链 + 指针） | 墓碑污染 / 仅线性探测可无墓碑删除 |
+| 缓存友好 | 差（指针跳转） | **好**（线性探测最佳） |
+| 最坏查找 | Θ(n) | Θ(n)（全表探测） |
+| 适用 | 删除频繁、键数波动大（Java `HashMap`） | 内存敏感、删除少（Python `dict`） |
+
+---
+
+## 八、代码实现（Java + Python）
+
+约定：可运行代码用 0-indexed（实战惯例）；哈希函数用「扰动 + 取模」（Java 风格），开放定址的 m 取质数使 h₂ ∈ [1, m−1] 自动互质。两个实现均已通过 **50 轮 × 20 000 次随机增删查、逐操作与 `HashMap` / `dict` 对拍**。
+
+### 8.1 Java：链地址法
 
 ```java
-import java.util.*;
-import java.util.function.BiConsumer;
-
 /**
- * 链地址法哈希表 - 完整实现
- *
- * 支持：插入、查找、删除、遍历、动态扩容
- *
- * @param <K> 键类型
- * @param <V> 值类型
+ * 链地址法哈希表（简化教学版）
+ * 桶数组 + 单链表，头插法；装载因子超过 0.75 时容量翻倍并重哈希。
  */
-public class ChainedHashMap<K, V> implements Map<K, V> {
+public class ChainedHashMap<K, V> {
 
-    /**
-     * 链表节点
-     */
     private static class Node<K, V> {
-        final int hash;
         final K key;
         V value;
         Node<K, V> next;
 
-        Node(int hash, K key, V value, Node<K, V> next) {
-            this.hash = hash;
+        Node(K key, V value, Node<K, V> next) {
             this.key = key;
             this.value = value;
             this.next = next;
         }
-
-        public final K getKey() { return key; }
-        public final V getValue() { return value; }
-
-        public final String toString() {
-            return key + "=" + value;
-        }
     }
 
-    // ============ 核心成员变量 ============
-    private Node<K, V>[] table;      // 桶数组
-    private int size;                 // 元素数量
-    private int threshold;            // 扩容阈值
-    private final float loadFactor;   // 装载因子
-    private final int initialCapacity;// 初始容量
+    private static final int INIT_CAPACITY = 8;
+    private static final double MAX_LOAD = 0.75;
 
-    // ============ 构造方法 ============
+    private Node<K, V>[] table;
+    private int size;
+
     @SuppressWarnings("unchecked")
-    public ChainedHashMap(int initialCapacity, float loadFactor) {
-        if (initialCapacity < 0) {
-            throw new IllegalArgumentException("Illegal initial capacity: " + initialCapacity);
-        }
-        if (loadFactor <= 0 || Float.isNaN(loadFactor)) {
-            throw new IllegalArgumentException("Illegal load factor: " + loadFactor);
-        }
-
-        this.initialCapacity = initialCapacity;
-        this.loadFactor = loadFactor;
-        this.threshold = (int) (initialCapacity * loadFactor);
-        this.table = (Node<K, V>[]) new Node[initialCapacity];
-    }
-
-    public ChainedHashMap(int initialCapacity) {
-        this(initialCapacity, 0.75f);
-    }
-
     public ChainedHashMap() {
-        this(16, 0.75f);
+        table = (Node<K, V>[]) new Node[INIT_CAPACITY];
     }
 
-    // ============ 哈希计算 ============
-    /**
-     * 计算键的哈希值
-     * 使用了 spread 方法将 hashCode 分布到所有位
-     */
-    private int hash(Object key) {
+    /** 扰动函数：混合 hashCode 的高低位，再取模定位桶 */
+    private int indexFor(Object key) {
         int h = key.hashCode();
-        // 扰动函数：将高位和低位混合，减少碰撞
-        return (key == null) ? 0 : (h ^ (h >>> 16)) & Integer.MAX_VALUE;
+        h ^= (h >>> 16);
+        return (h & 0x7fffffff) % table.length;
     }
 
-    /**
-     * 计算桶索引
-     */
-    private int indexFor(int hash, int length) {
-        return hash & (length - 1);  // 与操作比取模更快（length 必须是 2 的幂）
-    }
-
-    // ============ 核心操作 ============
-
-    /**
-     * 获取元素数量
-     */
-    @Override
-    public int size() {
-        return size;
-    }
-
-    /**
-     * 判断是否为空
-     */
-    @Override
-    public boolean isEmpty() {
-        return size == 0;
-    }
-
-    /**
-     * 判断是否包含键
-     */
-    @Override
-    public boolean containsKey(Object key) {
-        return getNode(key) != null;
-    }
-
-    /**
-     * 判断是否包含值
-     */
-    @Override
-    public boolean containsValue(Object value) {
-        Node<K, V>[] tab;
-        if (value == null) {
-            for (int i = 0; i < tab.length; i++) {
-                for (Node<K, V> e = tab[i]; e != null; e = e.next) {
-                    if (e.value == null) return true;
-                }
-            }
-        } else {
-            for (int i = 0; i < tab.length; i++) {
-                for (Node<K, V> e = tab[i]; e != null; e = e.next) {
-                    if (value.equals(e.value)) return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * 获取键对应的值
-     */
-    @Override
     public V get(Object key) {
-        Node<K, V> node = getNode(key);
-        return node == null ? null : node.value;
-    }
-
-    /**
-     * 根据键获取节点
-     */
-    private Node<K, V> getNode(Object key) {
-        if (key == null) return null;
-
-        int hash = hash(key);
-        int index = indexFor(hash, table.length);
-        Node<K, V> first = table[index];
-
-        if (first != null) {
-            // 检查第一个节点
-            if (first.hash == hash && key.equals(first.key)) {
-                return first;
-            }
-
-            // 检查后续节点
-            Node<K, V> e = first.next;
-            while (e != null) {
-                if (e.hash == hash && key.equals(e.key)) {
-                    return e;
-                }
-                e = e.next;
+        for (Node<K, V> e = table[indexFor(key)]; e != null; e = e.next) {
+            if (e.key.equals(key)) {
+                return e.value;
             }
         }
-
         return null;
     }
 
-    /**
-     * 插入键值对
-     */
-    @Override
-    public V put(K key, V value) {
-        if (key == null) {
-            throw new IllegalArgumentException("Key cannot be null");
-        }
-
-        int hash = hash(key);
-        int index = indexFor(hash, table.length);
-        Node<K, V> first = table[index];
-
-        // 检查键是否已存在
-        Node<K, V> e = first;
-        while (e != null) {
-            if (e.hash == hash && key.equals(e.key)) {
-                V oldValue = e.value;
+    public void put(K key, V value) {
+        int idx = indexFor(key);
+        for (Node<K, V> e = table[idx]; e != null; e = e.next) {
+            if (e.key.equals(key)) {   // 键已存在：更新
                 e.value = value;
-                return oldValue;  // 返回旧值
+                return;
             }
-            e = e.next;
         }
-
-        // 插入新节点（头插法，更高效）
-        addNode(hash, key, value, index);
-        return null;
-    }
-
-    /**
-     * 添加新节点
-     */
-    private void addNode(int hash, K key, V value, int index) {
-        Node<K, V> newNode = new Node<>(hash, key, value, table[index]);
-        table[index] = newNode;
-
-        // 检查是否需要扩容
-        if (size++ >= threshold) {
+        table[idx] = new Node<>(key, value, table[idx]);  // 头插法
+        size++;
+        if (size > table.length * MAX_LOAD) {
             resize();
         }
     }
 
-    /**
-     * 删除键值对
-     */
-    @Override
     public V remove(Object key) {
-        if (key == null) {
-            throw new IllegalArgumentException("Key cannot be null");
-        }
-
-        int hash = hash(key);
-        int index = indexFor(hash, table.length);
-        Node<K, V> prev = table[index];
-        Node<K, V> current = prev;
-
-        while (current != null) {
-            if (current.hash == hash && key.equals(current.key)) {
-                size--;
-
-                if (prev == current) {
-                    // 删除头节点
-                    table[index] = current.next;
+        int idx = indexFor(key);
+        Node<K, V> prev = null;
+        for (Node<K, V> e = table[idx]; e != null; e = e.next) {
+            if (e.key.equals(key)) {
+                if (prev == null) {
+                    table[idx] = e.next;
                 } else {
-                    // 删除中间节点
-                    prev.next = current.next;
+                    prev.next = e.next;
                 }
-
-                return current.value;
+                size--;
+                return e.value;
             }
-
-            prev = current;
-            current = current.next;
+            prev = e;
         }
-
         return null;
     }
 
-    /**
-     * 扩容
-     */
+    public int size() {
+        return size;
+    }
+
     @SuppressWarnings("unchecked")
     private void resize() {
-        int oldCapacity = table.length;
-        Node<K, V>[] oldTab = table;
-
-        // 新容量翻倍
-        int newCapacity = oldCapacity << 1;
-        int newThreshold = (int) (newCapacity * loadFactor);
-
-        // 创建新数组
-        Node<K, V>[] newTab = (Node<K, V>[]) new Node[newCapacity];
-        table = newTab;
-        threshold = newThreshold;
-
-        // 重新分配所有节点
-        for (int i = 0; i < oldCapacity; i++) {
-            Node<K, V> e = oldTab[i];
-            if (e != null) {
-                // 头节点
-                Node<K, V> next = e.next;
-                int newIndex = indexFor(e.hash, newCapacity);
-                e.next = newTab[newIndex];
-                newTab[newIndex] = e;
-
-                // 处理链表剩余节点
-                while (next != null) {
-                    Node<K, V> nextNext = next.next;
-                    int nextIndex = indexFor(next.hash, newCapacity);
-                    next.next = newTab[nextIndex];
-                    newTab[nextIndex] = next;
-                    next = nextNext;
-                }
-            }
-        }
-    }
-
-    // ============ 批量操作 ============
-
-    @Override
-    public void putAll(Map<? extends K, ? extends V> m) {
-        for (Map.Entry<? extends K, ? extends V> e : m.entrySet()) {
-            put(e.getKey(), e.getValue());
-        }
-    }
-
-    @Override
-    public void clear() {
-        Arrays.fill(table, null);
+        Node<K, V>[] old = table;
+        table = (Node<K, V>[]) new Node[old.length * 2];
         size = 0;
-    }
-
-    // ============ 视图方法 ============
-
-    @Override
-    public Set<K> keySet() {
-        Set<K> ks = keySet;
-        if (ks == null) {
-            ks = new KeySet();
-            keySet = ks;
-        }
-        return ks;
-    }
-
-    @Override
-    public Collection<V> values() {
-        Collection<V> vs = values;
-        if (vs == null) {
-            vs = new Values();
-            values = values = vs;
-        }
-        return vs;
-    }
-
-    @Override
-    public Set<Map.Entry<K, V>> entrySet() {
-        Set<Map.Entry<K, V>> es = entrySet;
-        if (es == null) {
-            es = new EntrySet();
-            entrySet = es;
-        }
-        return es;
-    }
-
-    // ============ 内部类 ============
-
-    private transient Set<K> keySet;
-    private transient Collection<V> values;
-    private transient Set<Map.Entry<K, V>> entrySet;
-
-    private final class KeySet extends AbstractSet<K> {
-        public final Iterator<K> iterator() {
-            return new KeyIterator();
-        }
-        public final int size() { return size; }
-        public final void clear() { ChainedHashMap.this.clear(); }
-        public final boolean contains(Object o) { return containsKey(o); }
-        public final boolean remove(Object o) { return ChainedHashMap.this.remove(o) != null; }
-    }
-
-    private final class Values extends AbstractCollection<V> {
-        public final Iterator<V> iterator() {
-            return new ValueIterator();
-        }
-        public final int size() { return size; }
-        public final void clear() { ChainedHashMap.this.clear(); }
-        public final boolean contains(Object o) { return containsValue(o); }
-    }
-
-    private final class EntrySet extends AbstractSet<Map.Entry<K, V>> {
-        public final Iterator<Map.Entry<K, V>> iterator() {
-            return new EntryIterator();
-        }
-        public final int size() { return size; }
-        public final void clear() { ChainedHashMap.this.clear(); }
-        public final boolean contains(Object o) {
-            if (!(o instanceof Map.Entry)) return false;
-            Map.Entry<?, ?> e = (Map.Entry<?, ?>) o;
-            Object key = e.getKey();
-            Node<K, V> candidate = getNode(key);
-            return candidate != null && candidate.equals(e);
-        }
-        public final boolean remove(Object o) {
-            if (!(o instanceof Map.Entry)) return false;
-            Map.Entry<?, ?> e = (Map.Entry<?, ?>) o;
-            Object key = e.getKey();
-            return ChainedHashMap.this.remove(key) != null;
-        }
-    }
-
-    // ============ 迭代器 ============
-
-    private abstract class HashIterator {
-        Node<K, V> next;        // next entry to return
-        Node<K, V> current;     // current entry
-        int index;              // current slot
-
-        HashIterator() {
-            Node<K, V>[] t = table;
-            current = next = null;
-            index = 0;
-            if (t != null && size > 0) {
-                // advance to first entry
-                do {} while (index < t.length && (next = t[index++]) == null);
+        for (Node<K, V> head : old) {
+            for (Node<K, V> e = head; e != null; e = e.next) {
+                put(e.key, e.value);   // 用新容量重新定位
             }
         }
-
-        public final boolean hasNext() {
-            return next != null;
-        }
-
-        final Node<K, V> nextNode() {
-            Node<K, V> e = next;
-            if (e == null) throw new NoSuchElementException();
-
-            Node<K, V>[] t = table;
-            current = e;
-            e = e.next;
-
-            if (t != null) {
-                while (index < t.length && (next = t[index++]) == null) {
-                    // advance to next non-empty bucket
-                }
-            } else {
-                next = null;
-            }
-
-            return e;
-        }
-
-        public final void remove() {
-            if (current == null) throw new IllegalStateException();
-            Object k = current.key;
-            current = null;
-            ChainedHashMap.this.remove(k);
-        }
-    }
-
-    private final class KeyIterator extends HashIterator implements Iterator<K> {
-        public final K next() { return nextNode().key; }
-    }
-
-    private final class ValueIterator extends HashIterator implements Iterator<V> {
-        public final V next() { return nextNode().value; }
-    }
-
-    private final class EntryIterator extends HashIterator implements Iterator<Map.Entry<K, V>> {
-        public final Map.Entry<K, V> next() { return nextNode(); }
-    }
-
-    // ============ 调试方法 ============
-
-    /**
-     * 打印哈希表状态
-     */
-    public void printState() {
-        System.out.println("=== 哈希表状态 ===");
-        System.out.println("容量: " + table.length);
-        System.out.println("元素数: " + size);
-        System.out.println("装载因子: " + loadFactor);
-        System.out.println("扩容阈值: " + threshold);
-        System.out.println("装载率: " + String.format("%.2f%%", (double) size / table.length * 100));
-
-        int nonEmpty = 0;
-        int maxChain = 0;
-        double totalChain = 0;
-
-        for (int i = 0; i < table.length; i++) {
-            Node<K, V> node = table[i];
-            int chainLen = 0;
-            if (node != null) {
-                nonEmpty++;
-                while (node != null) {
-                    chainLen++;
-                    node = node.next;
-                }
-                maxChain = Math.max(maxChain, chainLen);
-                totalChain += chainLen;
-            }
-        }
-
-        System.out.println("非空桶数: " + nonEmpty);
-        System.out.println("最长链: " + maxChain);
-        System.out.println("平均链长: " + String.format("%.2f", totalChain / Math.max(nonEmpty, 1)));
-        System.out.println("==================");
     }
 }
 ```
 
-#### 4.1.3 链地址法复杂度分析
-
-**查找操作的代价**：
-
-```
-T(n) = 哈希计算 + 定位桶 + 遍历链表
-
-平均情况（成功查找）：
-- 哈希计算：O(1)
-- 定位桶：O(1)
-- 遍历链表：O(1 + α)（期望链表长度 = α）
-
-总复杂度：O(1 + α)
-
-平均情况（失败查找）：
-- 遍历整个链表：O(1 + α)
-
-最坏情况（所有元素在同一桶）：
-- 链表长度 = n
-- 复杂度：O(n)
-```
-
-**均摊分析**：
-
-```mermaid
-graph TD
-    subgraph ChainingAmortized
-    A["n 次插入"] --> B["触发扩容 ⌈log₂(n/m₀)⌉ 次"]
-    B --> C["每次扩容代价: O(n)"]
-    C --> D["总扩容代价: O(n log n)"]
-    D --> E["均摊到每次插入: O(log n)"]
-    E --> F["当选择合适的初始容量<br/>均摊为 O(1)"]
-    end
-
-    style A fill:#9ff,stroke:#333
-    style F fill:#9f9,stroke:#333
-```
-
-### 4.2 开放定址法（Open Addressing）
-
-#### 4.2.1 核心思想
-
-**开放定址法**：所有元素都存储在桶数组中，不使用额外的数据结构。当发生冲突时，按某种规则继续探测下一个空桶。
-
-```mermaid
-flowchart TD
-    subgraph OpenAddressingFlow
-    A["插入 key"] --> B["计算初始桶 h(k, 0)"]
-    B --> C{"桶是否为空?"}
-    C -->|是| D["插入成功"]
-    C -->|否| E["继续探测<br/>h(k, 1), h(k, 2)..."]
-    E --> F{"找到空桶?"}
-    F -->|是| D
-    F -->|否| G["哈希表已满<br/>需要扩容"]
-    end
-
-    style A fill:#9ff,stroke:#333
-    style B fill:#ff9,stroke:#333
-    style C fill:#f99,stroke:#333
-    style D fill:#9f9,stroke:#333
-    style G fill:#f66,stroke:#333
-```
-
-#### 4.2.2 探测序列的三种方法
-
-```mermaid
-graph LR
-    subgraph ProbingMethods
-
-    subgraph LinearProbing
-    A["h(k, i) = (h'(k) + i) mod m"]
-    A --> B["探测序列: p, p+1, p+2, p+3..."]
-    end
-
-    subgraph QuadraticProbing
-    C["h(k, i) = (h'(k) + c1i + c2i²) mod m"]
-    C --> D["探测序列: p, p+1, p+4, p+9, p+16..."]
-    end
-
-    subgraph DoubleHashing
-    E["h(k, i) = (h1(k) + i × h2(k)) mod m"]
-    E --> F["探测序列: p, p+h2, p+2h2, p+3h2..."]
-    end
-
-    end
-
-    style A fill:#9ff,stroke:#333
-    style C fill:#9ff,stroke:#333
-    style E fill:#9ff,stroke:#333
-```
-
-#### 4.2.3 线性探测（Linear Probing）
-
-**公式**：
-```
-h(k, i) = (h'(k) + i) mod m
-```
-
-**特点**：连续冲突时会形成"聚集簇"
-
-```mermaid
-graph LR
-    subgraph LinearProbingExample
-    A["初始状态"] --> B["桶[0]=A<br/>桶[1]=空<br/>桶[2]=B<br/>桶[3]=空"]
-
-    C["插入 C<br/>h(C)=3"] --> D["桶[3]为空<br/>直接插入<br/>桶[3]=C"]
-
-    E["插入 D<br/>h(D)=0"] --> F["桶[0]被占用<br/>探测桶[1]<br/>桶[1]为空<br/>桶[1]=D"]
-
-    G["插入 E<br/>h(E)=0"] --> H["桶[0]被占用<br/>桶[1]被占用<br/>桶[2]被占用<br/>探测桶[3]<br/>桶[3]被占用<br/>桶[4]为空<br/>桶[4]=E"]
-    end
-
-    style D fill:#9f9,stroke:#333
-    style F fill:#ff9,stroke:#333
-    style H fill:#f99,stroke:#333
-```
-
-**聚集现象**：
-
-```mermaid
-graph TD
-    subgraph ClusteringFormation
-    A["插入元素<br/>A, B, C, D"] --> B["A 在桶[0]<br/>B 在桶[1]<br/>C 在桶[2]<br/>D 在桶[3]"]
-    B --> C["插入 X<br/>h(X)=0"]
-
-    C --> D["桶[0]被占用<br/>桶[1]被占用<br/>桶[2]被占用<br/>桶[3]被占用<br/>桶[4]为空"]
-
-    D --> E["形成一个连续的<br/>聚集簇: [0,1,2,3,4]"]
-
-    F["后续插入<br/>h(Y)=1, h(Z)=2..."] --> G["都要探测<br/>穿过整个聚集簇<br/>性能下降"]
-    end
-
-    style E fill:#f99,stroke:#333
-    style G fill:#f66,stroke:#333
-```
-
-#### 4.2.4 二次探测（Quadratic Probing）
-
-**公式**：
-```
-h(k, i) = (h'(k) + c₁i + c₂i²) mod m
-```
-
-**常用设置**：c₁ = 1, c₂ = 1
-
-```mermaid
-graph LR
-    subgraph QuadraticProbingSequence
-    A["初始位置: h'(k) = 3"] --> B["i=0: 3 + 0 + 0 = 3"]
-    A --> C["i=1: 3 + 1 + 1 = 5"]
-    A --> D["i=2: 3 + 2 + 4 = 9"]
-    A --> E["i=3: 3 + 3 + 9 = 15 mod 10 = 5"]
-    A --> F["i=4: 3 + 4 + 16 = 23 mod 10 = 3"]
-
-    B --> G["桶[3]"]
-    C --> H["桶[5]"]
-    D --> I["桶[9]"]
-    E --> H
-    F --> G
-
-    style A fill:#ff9,stroke:#333
-    style G fill:#9f9,stroke:#333
-    style H fill:#9f9,stroke:#333
-    style I fill:#9f9,stroke:#333
-    end
-```
-
-**二次探测的问题**：可能无法找到空桶，即使存在空桶
-
-```mermaid
-flowchart TD
-    subgraph QuadraticProbingDefect
-    A["假设：m = 10, h'(k) = 3"] --> B["i=0: 3"]
-    B --> C["i=1: 5"]
-    C --> D["i=2: 9"]
-    D --> E["i=3: 5<br/>回到 5<br/>形成循环!"]
-    E --> F["继续探测"]
-    F --> G["回到 5<br/>循环!"]
-    style D fill:#f99,stroke:#333
-    style F fill:#f66,stroke:#333
-    end
-```
-
-**解决方案**：确保 m 是质数，且满足特定条件
+### 8.2 Java：开放定址法（双重哈希 + 墓碑）
 
 ```java
 /**
- * 二次探测的完整性保证
- *
- * 如果 m 是质数且 m ≡ 3 (mod 4)，则探测序列可以覆盖至少一半的桶
+ * 开放定址法哈希表（双重哈希 + DELETED 墓碑标记）
+ * m 取质数，h2(k) 落在 [1, m-1] 自动与 m 互质；
+ * 已用槽（含墓碑）达到 0.75m 时扩容到下一个约 2 倍的质数。
  */
-public class QuadraticProbing {
-    private final int m;  // 桶数量，必须是质数
+public class OpenAddressingHashMap<K, V> {
 
-    public QuadraticProbing(int m) {
-        if (!isPrime(m)) {
-            throw new IllegalArgumentException("m 必须是质数");
-        }
-        if (m % 4 != 3) {
-            System.out.println("警告: m ≡ 3 (mod 4) 可以保证更好的探测覆盖率");
-        }
-        this.m = m;
+    private static final Object DELETED = new Object();  // 墓碑标记
+    private static final double MAX_LOAD = 0.75;
+
+    private Object[] keys;     // null=空槽, DELETED=墓碑, 其余=键
+    private Object[] values;
+    private int m;             // 桶数（质数）
+    private int size;          // 有效元素数
+    private int used;          // 非空槽数（含墓碑）
+
+    public OpenAddressingHashMap() {
+        m = 11;
+        keys = new Object[m];
+        values = new Object[m];
     }
 
-    /**
-     * 二次探测
-     */
-    public int probe(int hPrime, int i) {
-        // c1 = 1, c2 = 1
-        return (hPrime + i + i * i) % m;
+    private int h1(Object key) {
+        return (key.hashCode() & 0x7fffffff) % m;
+    }
+
+    private int h2(Object key) {
+        return 1 + (key.hashCode() & 0x7fffffff) % (m - 1);
+    }
+
+    @SuppressWarnings("unchecked")
+    public V get(Object key) {
+        int h1 = h1(key), h2 = h2(key);
+        for (int i = 0; i < m; i++) {
+            int q = (h1 + i * h2) % m;
+            if (keys[q] == null) {
+                return null;                       // 遇到空槽：提前终止
+            }
+            if (keys[q] != DELETED && keys[q].equals(key)) {
+                return (V) values[q];
+            }
+        }
+        return null;
+    }
+
+    public void put(K key, V value) {
+        if (used >= m * MAX_LOAD) {
+            resize();
+        }
+        int h1 = h1(key), h2 = h2(key);
+        int firstDeleted = -1;
+        for (int i = 0; i < m; i++) {
+            int q = (h1 + i * h2) % m;
+            if (keys[q] == null) {                 // 空槽：插入（优先用墓碑位）
+                int pos = (firstDeleted >= 0) ? firstDeleted : q;
+                keys[pos] = key;
+                values[pos] = value;
+                size++;
+                used++;
+                return;
+            }
+            if (keys[q] == DELETED) {
+                if (firstDeleted < 0) {
+                    firstDeleted = q;              // 记录第一个墓碑，继续找键
+                }
+            } else if (keys[q].equals(key)) {      // 键已存在：更新
+                values[q] = value;
+                return;
+            }
+        }
+        if (firstDeleted >= 0) {                   // 表满但有墓碑可用
+            keys[firstDeleted] = key;
+            values[firstDeleted] = value;
+            size++;
+            return;
+        }
+        throw new IllegalStateException("hash table overflow");
+    }
+
+    @SuppressWarnings("unchecked")
+    public V remove(Object key) {
+        int h1 = h1(key), h2 = h2(key);
+        for (int i = 0; i < m; i++) {
+            int q = (h1 + i * h2) % m;
+            if (keys[q] == null) {
+                return null;
+            }
+            if (keys[q] != DELETED && keys[q].equals(key)) {
+                V old = (V) values[q];
+                keys[q] = DELETED;                 // 置墓碑而非 null
+                values[q] = null;
+                size--;
+                return old;
+            }
+        }
+        return null;
+    }
+
+    public int size() {
+        return size;
+    }
+
+    /** 扩容到下一个约 2 倍的质数；重插时顺带清掉所有墓碑 */
+    private void resize() {
+        Object[] oldKeys = keys, oldValues = values;
+        int oldM = m;
+        m = nextPrime(2 * oldM);
+        keys = new Object[m];
+        values = new Object[m];
+        size = 0;
+        used = 0;
+        for (int i = 0; i < oldM; i++) {
+            if (oldKeys[i] != null && oldKeys[i] != DELETED) {
+                @SuppressWarnings("unchecked")
+                K k = (K) oldKeys[i];
+                @SuppressWarnings("unchecked")
+                V v = (V) oldValues[i];
+                put(k, v);
+            }
+        }
+    }
+
+    private static int nextPrime(int n) {
+        while (!isPrime(n)) {
+            n++;
+        }
+        return n;
     }
 
     private static boolean isPrime(int n) {
         if (n < 2) return false;
-        if (n == 2) return true;
-        if (n % 2 == 0) return false;
-        int sqrt = (int) Math.sqrt(n);
-        for (int i = 3; i <= sqrt; i += 2) {
+        for (int i = 2; (long) i * i <= n; i++) {
             if (n % i == 0) return false;
         }
         return true;
@@ -1860,1097 +628,295 @@ public class QuadraticProbing {
 }
 ```
 
-#### 4.2.5 双重哈希（Double Hashing）
-
-**公式**：
-```
-h(k, i) = (h₁(k) + i × h₂(k)) mod m
-```
-
-**要求**：
-- h₂(k) 与 m 互质（即 gcd(h₂(k), m) = 1）
-- 确保探测序列覆盖所有桶
-
-```mermaid
-graph LR
-    subgraph DoubleHashingExample
-    A["h₁(k) = k mod 10<br/>h₂(k) = 7 - (k mod 7)"] --> B["key = 3"]
-    A --> C["key = 6"]
-
-    B --> D["h₁(3) = 3<br/>h₂(3) = 4<br/>探测序列: 3, 7, 1, 5, 9, 3..."]
-    C --> E["h₁(6) = 6<br/>h₂(6) = 1<br/>探测序列: 6, 7, 8, 9, 0, 1..."]
-
-    D --> F["步长 = 4<br/>访问桶: 3→7→1→5→9→3..."]
-    E --> G["步长 = 1<br/>访问桶: 6→7→8→9→0→1..."]
-
-    style A fill:#ff9,stroke:#333
-    style D fill:#9f9,stroke:#333
-    style E fill:#9f9,stroke:#333
-    end
-```
-
-**完整实现（双重哈希）**：
-
-```java
-import java.util.NoSuchElementException;
-
-/**
- * 开放定址法哈希表 - 双重哈希实现
- */
-public class OpenAddressingHashMap<K, V> {
-
-    private static class Entry<K, V> {
-        K key;
-        V value;
-        boolean deleted;  // 懒删除标记
-
-        Entry(K key, V value) {
-            this.key = key;
-            this.value = value;
-            this.deleted = false;
-        }
-    }
-
-    // ============ 核心成员变量 ============
-    private Entry<K, V>[] table;
-    private final int m;           // 桶数量
-    private int size;              // 有效元素数量
-    private int used;              // 已使用（包括标记删除）的数量
-    private final double maxLoadFactor;
-
-    @SuppressWarnings("unchecked")
-    public OpenAddressingHashMap(int m, double maxLoadFactor) {
-        this.m = m;
-        this.maxLoadFactor = maxLoadFactor;
-        this.table = (Entry<K, V>[]) new Entry[m];
-        this.size = 0;
-        this.used = 0;
-    }
-
-    public OpenAddressingHashMap(int m) {
-        this(m, 0.75);
-    }
-
-    // ============ 哈希函数 ============
-
-    /**
-     * 第一个哈希函数：除法哈希
-     */
-    private int h1(K key) {
-        return (key.hashCode() & 0x7fffffff) % m;
-    }
-
-    /**
-     * 第二个哈希函数：确保与 m 互质
-     */
-    private int h2(K key) {
-        int hash = key.hashCode() & 0x7fffffff;
-        // 结果在 1 到 m-1 之间
-        int result = 1 + (hash % (m - 1));
-
-        // 确保与 m 互质
-        if (gcd(result, m) != 1) {
-            // 找到与 m 互质的数
-            for (int i = 1; i < m; i++) {
-                if (gcd(i, m) == 1) {
-                    return i;
-                }
-            }
-        }
-
-        return result;
-    }
-
-    private static int gcd(int a, int b) {
-        while (b != 0) {
-            int temp = a % b;
-            a = b;
-            b = temp;
-        }
-        return a;
-    }
-
-    /**
-     * 双重哈希探测
-     */
-    private int probe(K key, int i) {
-        return (h1(key) + i * h2(key)) % m;
-    }
-
-    // ============ 核心操作 ============
-
-    /**
-     * 插入
-     */
-    public void put(K key, V value) {
-        if (used >= m * maxLoadFactor) {
-            rehash();
-        }
-
-        int i = 0;
-        while (i < m) {
-            int index = probe(key, i);
-
-            if (table[index] == null) {
-                // 找到空桶，插入新元素
-                table[index] = new Entry<>(key, value);
-                size++;
-                used++;
-                return;
-            }
-
-            if (table[index].deleted) {
-                // 找到已删除的桶，复用它
-                table[index].key = key;
-                table[index].value = value;
-                table[index].deleted = false;
-                size++;
-                return;
-            }
-
-            if (table[index].key.equals(key)) {
-                // 键已存在，更新值
-                table[index].value = value;
-                return;
-            }
-
-            i++;  // 继续探测
-        }
-
-        throw new RuntimeException("哈希表已满，无法插入");
-    }
-
-    /**
-     * 查找
-     */
-    public V get(K key) {
-        int i = 0;
-        while (i < m) {
-            int index = probe(key, i);
-
-            if (table[index] == null) {
-                return null;  // 提前终止
-            }
-
-            if (!table[index].deleted && table[index].key.equals(key)) {
-                return table[index].value;
-            }
-
-            i++;
-        }
-
-        return null;
-    }
-
-    /**
-     * 删除（懒删除）
-     */
-    public void delete(K key) {
-        int i = 0;
-        while (i < m) {
-            int index = probe(key, i);
-
-            if (table[index] == null) {
-                return;  // 不存在
-            }
-
-            if (!table[index].deleted && table[index].key.equals(key)) {
-                table[index].deleted = true;
-                size--;
-                return;
-            }
-
-            i++;
-        }
-    }
-
-    /**
-     * 再哈希（扩容）
-     */
-    @SuppressWarnings("unchecked")
-    private void rehash() {
-        Entry<K, V>[] oldTable = table;
-        int oldM = m;
-
-        // 新容量翻倍
-        int newM = oldM * 2;
-        table = (Entry<K, V>[]) new Entry[newM];
-        size = 0;
-        used = 0;
-
-        // 重新插入所有有效元素
-        for (int i = 0; i < oldM; i++) {
-            if (oldTable[i] != null && !oldTable[i].deleted) {
-                // 需要使用新的 m 重新计算探测序列
-                // 这里简化处理，实际应该重建索引
-                Entry<K, V> entry = oldTable[i];
-                // 直接插入（会使用新的 probe 函数）
-                int j = 0;
-                while (j < newM) {
-                    int index = (entry.key.hashCode() & 0x7fffffff + j * (1 + (entry.key.hashCode() & 0x7fffffff % (newM - 1)))) % newM;
-
-                    if (table[index] == null) {
-                        table[index] = new Entry<>(entry.key, entry.value);
-                        size++;
-                        used++;
-                        break;
-                    }
-                    j++;
-                }
-            }
-        }
-    }
-
-    // ============ 辅助方法 ============
-
-    public int size() {
-        return size;
-    }
-
-    public boolean isEmpty() {
-        return size == 0;
-    }
-
-    public void printState() {
-        System.out.println("=== 开放定址哈希表状态 ===");
-        System.out.println("容量: " + m);
-        System.out.println("元素数: " + size);
-        System.out.println("已使用: " + used);
-        System.out.println("装载率: " + String.format("%.2f%%", (double) used / m * 100));
-        System.out.println("============================");
-    }
-}
-```
-
-#### 4.2.6 开放定址法复杂度分析
-
-**探测次数分析**：
-
-| 探测方法 | 平均成功查找 | 平均失败查找 | 最坏情况 |
-|---------|------------|------------|---------|
-| 线性探测 | 1/2 × (1 + 1/(1-α)²) | 1/2 × (1 + 1/(1-α)²) | O(n) |
-| 二次探测 | 1/2 × (1 + 1/(1-α)) | 1/2 × (1 + 1/(1-α)²) | O(n) |
-| 双重哈希 | -ln(1-α)/α | 1/(1-α) | O(n) |
-
-```mermaid
-graph TD
-    subgraph OpenAddressingProbes
-    A["装载因子 α"] --> B["α = 0.5"]
-    A --> C["α = 0.75"]
-    A --> D["α = 0.9"]
-
-    B --> E["线性探测: ≈ 1.5 次<br/>双重哈希: ≈ 1.39 次"]
-    C --> F["线性探测: ≈ 2.5 次<br/>双重哈希: ≈ 1.85 次"]
-    D --> G["线性探测: ≈ 5.5 次<br/>双重哈希: ≈ 2.56 次"]
-    end
-
-    style B fill:#9ff,stroke:#333
-    style C fill:#ff9,stroke:#333
-    style D fill:#f99,stroke:#333
-```
-
-### 4.3 链地址法 vs 开放定址法
-
-```mermaid
-flowchart TD
-    subgraph SelectionDecision
-    A["选择冲突解决策略"] --> B["元素数量是否确定?"]
-    B -->|是| C["开放定址法<br/>空间紧凑"]
-    B -->|否| D["链地址法<br/>更灵活"]
-
-    C --> E["是否需要高性能?"]
-    D --> F["是否关心最坏情况?"]
-
-    E -->|是| G["双重哈希<br/>避免聚集"]
-    E -->|否| H["线性探测<br/>简单高效"]
-
-    F -->|是| I["链地址法<br/>最坏 O(n)<br/>但可预测"]
-    F -->|否| J["开放定址法<br/>平均情况优秀"]
-    end
-
-    style A fill:#ff9,stroke:#333
-    style C fill:#9ff,stroke:#333
-    style D fill:#9ff,stroke:#333
-```
-
-| 特性 | 链地址法 | 开放定址法 |
-|-----|---------|-----------|
-| 存储结构 | 桶 + 链表 | 纯数组 |
-| 内存使用 | O(n + m) | O(m) |
-| 删除操作 | 简单（O(1)） | 需标记删除或重建 |
-| 缓存友好性 | 较差 | 较好 |
-| 最坏查找 | O(n) | O(n) |
-| 适用场景 | 元素数量不确定 | 元素数量相对固定 |
-| 负载因子限制 | 可 > 1 | 必须 < 1 |
-
----
-
-## 五、再哈希（Rehash）
-
-### 5.1 为什么需要再哈希？
-
-```mermaid
-flowchart TD
-    subgraph RehashNecessity
-    A["装载因子 α 增大"] --> B["链表变长"]
-    B --> C["查找变慢"]
-    C --> D["用户体验下降"]
-
-    E["解决方案"] --> F["当 α 达到阈值时<br/>扩大桶数组<br/>重新分配元素"]
-    F --> G["α 减半<br/>性能恢复"]
-    end
-
-    style A fill:#f99,stroke:#333
-    style D fill:#f66,stroke:#333
-    style F fill:#9f9,stroke:#333
-    style G fill:#9f9,stroke:#333
-```
-
-### 5.2 再哈希的代价分析
-
-**均摊分析**：
-
-```
-插入 n 个元素：
-- 每次插入的基础成本：O(1)
-- 再哈希发生的时机：当 size 达到 threshold
-- 再哈希次数：O(log n)（每次容量翻倍）
-- 每次再哈希的成本：O(size)
-
-总成本 = n × O(1) + O(1) + O(2) + O(4) + ... + O(n/2)
-       = O(n) + O(n)
-       = O(n)
-
-均摊成本 = O(n) / n = O(1)
-```
-
-```mermaid
-graph TD
-    subgraph RehashAmortized
-    A["插入序列"] --> B["元素 1 到 m×α₀<br/>无再哈希"]
-    A --> C["元素 m×α₀ + 1<br/>触发再哈希<br/>成本 O(m×α₀)"]
-    A --> D["元素 2m×α₀ + 1<br/>再次再哈希<br/>成本 O(2m×α₀)"]
-    A --> E["元素 4m×α₀ + 1<br/>再次再哈希<br/>成本 O(4m×α₀)"]
-    A --> F["...<br/>继续翻倍"]
-
-    G["总成本"] --> H["m×α₀ + 2m×α₀ + 4m×α₀ + ... + n"]
-    H --> I["< 2n<br/>均摊为 O(1)"]
-    end
-
-    style A fill:#9ff,stroke:#333
-    style I fill:#9f9,stroke:#333
-```
-
-## 六、Java 标准库中的哈希表
-
-### 6.1 HashMap 源码解析
-
-```mermaid
-graph TD
-    subgraph HashMapCore
-    A["HashMap<K,V>"] --> B["transient Node<K,V>[] table"]
-    A --> C["transient int size"]
-    A --> D["transient int modCount"]
-    A --> E["final float loadFactor"]
-    A --> F["int threshold"]
-
-    subgraph NodeStructure
-    G["final int hash"]
-    H["final K key"]
-    I["V value"]
-    J["Node<K,V> next"]
-    end
-
-    B --> G
-    B --> H
-    B --> I
-    B --> J
-    end
-
-    style A fill:#ff9,stroke:#333
-    style B fill:#9ff,stroke:#333
-    style G fill:#9f9,stroke:#333
-    style H fill:#9f9,stroke:#333
-    style I fill:#9f9,stroke:#333
-    style J fill:#9f9,stroke:#333
-```
-
-**Java 8 HashMap 的关键优化**：
-
-1. **链表 → 红黑树转换**：当链表长度超过 8 且桶数量 ≥ 64 时
-2. **扰动函数**：混合高位和低位，减少碰撞
-
-```java
-// HashMap 中的关键代码
-
-// 扰动函数
-static final int hash(Object key) {
-    int h;
-    return (key == null) ? 0 :
-        (h = key.hashCode()) ^ (h >>> 16);  // 高位与低位异或
-}
-
-// 链表转红黑树的阈值
-static final int TREEIFY_THRESHOLD = 8;
-
-// 桶数组最小容量（才能转换为红黑树）
-static final int MIN_TREEIFY_CAPACITY = 64;
-```
-
-### 6.2 HashMap 使用详解
-
-```java
-import java.util.HashMap;
-import java.util.Map;
-
-public class HashMapUsage {
-
-    public static void main(String[] args) {
-        // ============ 基本操作 ============
-        Map<String, Integer> map = new HashMap<>();
-
-        // 插入
-        map.put("Alice", 25);
-        map.put("Bob", 30);
-        map.put("Charlie", 35);
-
-        // 查找
-        System.out.println("Alice: " + map.get("Alice"));  // 25
-
-        // 检查键是否存在
-        System.out.println("Contains Bob? " + map.containsKey("Bob"));  // true
-
-        // 获取默认值（Java 8+）
-        Integer age = map.getOrDefault("David", -1);  // -1
-        System.out.println("David: " + age);
-
-        // 安全的插入（键不存在才插入）
-        map.putIfAbsent("Alice", 26);  // 不覆盖，返回旧值 25
-
-        // 计算并更新
-        map.merge("Alice", 1, Integer::sum);  // Alice: 25 + 1 = 26
-        System.out.println("Alice after merge: " + map.get("Alice"));
-
-        // 遍历
-        System.out.println("\n遍历方式 1：entrySet");
-        for (Map.Entry<String, Integer> entry : map.entrySet()) {
-            System.out.println(entry.getKey() + ": " + entry.getValue());
-        }
-
-        System.out.println("\n遍历方式 2：forEach (Java 8+)");
-        map.forEach((k, v) -> System.out.println(k + ": " + v));
-
-        System.out.println("\n遍历方式 3：keySet");
-        for (String key : map.keySet()) {
-            System.out.println(key + ": " + map.get(key));
-        }
-
-        // ============ 性能相关 ============
-        System.out.println("\nHashMap 统计：");
-        System.out.println("Size: " + map.size());
-        System.out.println("Is empty: " + map.isEmpty());
-
-        // 删除
-        map.remove("Bob");
-        System.out.println("After removing Bob: " + map.size());
-
-        // 清空
-        map.clear();
-        System.out.println("After clear: " + map.size());
-    }
-}
-```
-
-### 6.3 HashMap vs HashTable vs ConcurrentHashMap
-
-| 特性 | HashMap | HashTable | ConcurrentHashMap |
-|-----|---------|-----------|-------------------|
-| 线程安全 | 否 | 是 | 是 |
-| 锁粒度 | 无 | 方法级 | 桶级（Java 8+） |
-| 允许 null 键 | 是 | 否 | 否 |
-| 允许 null 值 | 是 | 否 | 否 |
-| 迭代器 | 快速失败 | 快速失败 | 弱一致 |
-| 默认初始容量 | 16 | 11 | 16 |
-| 性能（并发） | 最低 | 较低 | 最高 |
-| 适用场景 | 单线程 | 低并发 | 高并发 |
-
----
-
-## 七、哈希表的应用扩展
-
-### 7.1 布隆过滤器（Bloom Filter）
-
-**原理**：使用多个哈希函数，将元素映射到一个位数组中。
-
-```mermaid
-graph LR
-    subgraph BloomFilterPrinciple
-    A["元素 x"] --> B["哈希函数 1<br/>h1(x) = 2"]
-    A --> C["哈希函数 2<br/>h2(x) = 5"]
-    A --> D["哈希函数 3<br/>h3(x) = 7"]
-
-    B --> E["位数组<br/>[0,0,1,0,0,1,0,1,0,0]"]
-    C --> E
-    D --> E
-
-    F["元素 y"] --> G["h1(y) = 2"]
-    G --> H["位数组<br/>[0,0,1,0,0,1,0,1,0,0]"]
-    H --> I["检查：位置 2,5,7<br/>都为 1<br/>y 可能存在"]
-    end
-
-    style A fill:#9ff,stroke:#333
-    style E fill:#ff9,stroke:#333
-    style I fill:#9f9,stroke:#333
-```
-
-**布隆过滤器实现**：
-
-```java
-import java.util.BitSet;
-import java.util.function.IntFunction;
-
-/**
- * 布隆过滤器实现
- *
- * 特点：
- * - 空间效率极高
- * - 可能存在假阳性（判断"存在"可能错误）
- * - 不存在假阴性（判断"不存在"一定正确）
- */
-public class BloomFilter {
-    private final BitSet bitSet;
-    private final int size;              // 位数组大小
-    private final int numHashFunctions;  // 哈希函数数量
-
-    public BloomFilter(int size, int numHashFunctions) {
-        this.size = size;
-        this.numHashFunctions = numHashFunctions;
-        this.bitSet = new BitSet(size);
-    }
-
-    /**
-     * 使用建议的参数
-     * @param expectedElements 期望存储的元素数量
-     * @param falsePositiveRate 期望的假阳性率
-     */
-    public static BloomFilter withExpectedElements(int expectedElements, double falsePositiveRate) {
-        // 计算最优的位数组大小
-        // m = -n × ln(p) / (ln(2)²)
-        int size = (int) Math.ceil(-expectedElements * Math.log(falsePositiveRate) / (Math.log(2) * Math.log(2)));
-
-        // 计算最优的哈希函数数量
-        // k = (m/n) × ln(2)
-        int numHashFunctions = (int) Math.ceil((double) size / expectedElements * Math.log(2));
-
-        return new BloomFilter(size, numHashFunctions);
-    }
-
-    /**
-     * 计算多个哈希值
-     */
-    private int[] getHashIndices(String element) {
-        int[] indices = new int[numHashFunctions];
-
-        // 使用双哈希技术生成多个哈希值
-        int hash1 = element.hashCode();
-        int hash2 = hash1 >>> 16 ^ hash1;
-
-        for (int i = 0; i < numHashFunctions; i++) {
-            indices[i] = Math.abs((hash1 + i * hash2) % size);
-        }
-
-        return indices;
-    }
-
-    /**
-     * 添加元素
-     */
-    public void add(String element) {
-        int[] indices = getHashIndices(element);
-        for (int index : indices) {
-            bitSet.set(index);
-        }
-    }
-
-    /**
-     * 检查元素是否存在
-     * @return true 表示元素可能存在，false 表示一定不存在
-     */
-    public boolean mightContain(String element) {
-        int[] indices = getHashIndices(element);
-        for (int index : indices) {
-            if (!bitSet.get(index)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * 获取当前使用的位数
-     */
-    public int getUsedBits() {
-        return bitSet.cardinality();
-    }
-
-    /**
-     * 获取假阳性率估算
-     */
-    public double getEstimatedFalsePositiveRate() {
-        double bitsPerElement = (double) size / getUsedBits();
-        return Math.pow(1 - Math.exp(-numHashFunctions / bitsPerElement), numHashFunctions);
-    }
-
-    @Override
-    public String toString() {
-        return String.format("BloomFilter(size=%d, elements=%d, fpr≈%.4f)",
-                size, getUsedBits(), getEstimatedFalsePositiveRate());
-    }
-}
-```
-
-### 7.2 一致性哈希（Consistent Hashing）
-
-**应用场景**：分布式系统中的负载均衡和数据分片。
-
-```mermaid
-graph LR
-    subgraph ConsistentHashingRing
-    A["哈希环<br/>0 → 2^32-1"] --> B["节点 A<br/>hash(A) = 100"]
-    B --> C["节点 B<br/>hash(B) = 300"]
-    C --> D["节点 C<br/>hash(C) = 500"]
-    D --> E["..."]
-    E --> A
-
-    F["数据 key<br/>hash(key) = 200"] --> G["落在节点 B 和 C 之间<br/>分配给节点 B"]
-
-    H["添加节点 D<br/>hash(D) = 400"] --> I["只影响 B-C 区间<br/>其他数据不受影响"]
-    end
-
-    style F fill:#9ff,stroke:#333
-    style G fill:#ff9,stroke:#333
-    style I fill:#9f9,stroke:#333
-```
-
-### 7.3 LRU 缓存实现
-
-```java
-import java.util.*;
-
-public class LRUCache<K, V> {
-    private final int capacity;
-    private final LinkedHashMap<K, V> cache;
-
-    public LRUCache(int capacity) {
-        this.capacity = capacity;
-        // accessOrder = true 表示按访问顺序排序
-        this.cache = new LinkedHashMap<>(capacity, 0.75f, true) {
-            @Override
-            protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
-                return size() > capacity;
-            }
-        };
-    }
-
-    public V get(K key) {
-        return cache.getOrDefault(key, null);
-    }
-
-    public void put(K key, V value) {
-        cache.put(key, value);
-    }
-
-    public int size() {
-        return cache.size();
-    }
-
-    public void clear() {
-        cache.clear();
-    }
-
-    @Override
-    public String toString() {
-        return cache.toString();
-    }
-}
+### 8.3 Python：双实现
+
+```python
+"""链地址法哈希表（教学版）：桶数组 + 单链表头插，装载因子 > 0.75 时翻倍扩容。"""
+
+
+class ChainedHashMap:
+    class _Node:
+        __slots__ = ("key", "value", "next")
+
+        def __init__(self, key, value, nxt):
+            self.key = key
+            self.value = value
+            self.next = nxt
+
+    INIT_CAPACITY = 8
+    MAX_LOAD = 0.75
+
+    def __init__(self):
+        self._table = [None] * self.INIT_CAPACITY
+        self._size = 0
+
+    def _index(self, key):
+        return hash(key) % len(self._table)
+
+    def get(self, key, default=None):
+        node = self._table[self._index(key)]
+        while node is not None:
+            if node.key == key:
+                return node.value
+            node = node.next
+        return default
+
+    def put(self, key, value):
+        idx = self._index(key)
+        node = self._table[idx]
+        while node is not None:
+            if node.key == key:          # 键已存在：更新
+                node.value = value
+                return
+            node = node.next
+        self._table[idx] = self._Node(key, value, self._table[idx])  # 头插法
+        self._size += 1
+        if self._size > len(self._table) * self.MAX_LOAD:
+            self._resize()
+
+    def remove(self, key):
+        idx = self._index(key)
+        prev, node = None, self._table[idx]
+        while node is not None:
+            if node.key == key:
+                if prev is None:
+                    self._table[idx] = node.next
+                else:
+                    prev.next = node.next
+                self._size -= 1
+                return node.value
+            prev, node = node, node.next
+        return None
+
+    def size(self):
+        return self._size
+
+    def _resize(self):
+        old = self._table
+        self._table = [None] * (len(old) * 2)
+        self._size = 0
+        for head in old:
+            while head is not None:
+                self.put(head.key, head.value)   # 用新容量重新定位
+                head = head.next
+
+
+class OpenAddressingHashMap:
+    """开放定址法哈希表：双重哈希 + DELETED 墓碑；m 为质数，h2 ∈ [1, m-1]。"""
+
+    _DELETED = object()      # 墓碑标记
+    MAX_LOAD = 0.75
+
+    def __init__(self):
+        self._m = 11
+        self._keys = [None] * self._m
+        self._values = [None] * self._m
+        self._size = 0
+        self._used = 0       # 非空槽数（含墓碑）
+
+    def _h1(self, key):
+        return hash(key) % self._m
+
+    def _h2(self, key):
+        return 1 + hash(key) % (self._m - 1)
+
+    def get(self, key, default=None):
+        h1, h2 = self._h1(key), self._h2(key)
+        for i in range(self._m):
+            q = (h1 + i * h2) % self._m
+            if self._keys[q] is None:
+                return default             # 遇到空槽：提前终止
+            if self._keys[q] is not self._DELETED and self._keys[q] == key:
+                return self._values[q]
+        return default
+
+    def put(self, key, value):
+        if self._used >= self._m * self.MAX_LOAD:
+            self._resize()
+        h1, h2 = self._h1(key), self._h2(key)
+        first_deleted = -1
+        for i in range(self._m):
+            q = (h1 + i * h2) % self._m
+            if self._keys[q] is None:
+                pos = first_deleted if first_deleted >= 0 else q
+                self._keys[pos] = key
+                self._values[pos] = value
+                self._size += 1
+                self._used += 1
+                return
+            if self._keys[q] is self._DELETED:
+                if first_deleted < 0:
+                    first_deleted = q      # 记录第一个墓碑，继续找键
+            elif self._keys[q] == key:     # 键已存在：更新
+                self._values[q] = value
+                return
+        if first_deleted >= 0:
+            self._keys[first_deleted] = key
+            self._values[first_deleted] = value
+            self._size += 1
+            return
+        raise RuntimeError("hash table overflow")
+
+    def remove(self, key):
+        h1, h2 = self._h1(key), self._h2(key)
+        for i in range(self._m):
+            q = (h1 + i * h2) % self._m
+            if self._keys[q] is None:
+                return None
+            if self._keys[q] is not self._DELETED and self._keys[q] == key:
+                old = self._values[q]
+                self._keys[q] = self._DELETED   # 置墓碑而非 None
+                self._values[q] = None
+                self._size -= 1
+                return old
+        return None
+
+    def size(self):
+        return self._size
+
+    def _resize(self):
+        old_keys, old_values = self._keys, self._values
+        self._m = self._next_prime(2 * self._m)
+        self._keys = [None] * self._m
+        self._values = [None] * self._m
+        self._size = 0
+        self._used = 0
+        for k, v in zip(old_keys, old_values):
+            if k is not None and k is not self._DELETED:
+                self.put(k, v)             # 顺带清掉所有墓碑
+
+    @staticmethod
+    def _next_prime(n):
+        def is_prime(x):
+            if x < 2:
+                return False
+            i = 2
+            while i * i <= x:
+                if x % i == 0:
+                    return False
+                i += 1
+            return True
+        while not is_prime(n):
+            n += 1
+        return n
 ```
 
 ---
 
-## 八、复杂度分析与总结
+## 九、复杂度速查与易混点
 
-### 8.1 各实现复杂度对比
+### 9.1 速查表
 
-| 实现方式 | 查找平均 | 查找最坏 | 插入平均 | 插入最坏 | 空间 |
-|---------|---------|---------|---------|---------|-----|
-| 链地址法 | O(1 + α) | O(n) | O(1) | O(1) | O(n + m) |
-| 线性探测 | O(1/(1-α)) | O(n) | O(1/(1-α)) | O(n) | O(m) |
-| 双重哈希 | O(-ln(1-α)/α) | O(n) | O(1/(1-α)) | O(n) | O(m) |
-| HashMap (Java 8+) | O(log n) 平均 | O(log n) | O(log n) 平均 | O(log n) | O(n) |
+| 项目 | 链地址法 | 开放定址法（理想假设） |
+|------|----------|------------------------|
+| 装载因子 α | n/m，可 > 1 | n/m，必须 < 1 |
+| 查找（平均） | Θ(1 + α)（成功/失败同阶） | 失败 ≤ 1/(1−α)；成功 ≤ (1/α)·ln(1/(1−α)) |
+| 插入（平均） | O(1)（头插） | ≤ 1/(1−α) 次探测 |
+| 删除 | O(1)（双向链 + 元素指针） | 墓碑法近似同查找；线性探测可前移填补 |
+| 最坏情况 | 全部同槽 Θ(n) | 探遍全表 Θ(m) |
+| 扩容 | 翻倍 + 重哈希，均摊 O(1) | 同左 |
 
-### 8.2 哈希表设计决策树
+### 9.2 易混点对比
 
-```mermaid
-flowchart TD
-    A["设计哈希表"] --> B["线程安全?"]
-    B -->|是，低并发| C["Hashtable"]
-    B -->|是，高并发| D["ConcurrentHashMap"]
-    B -->|否| E["HashMap"]
+| 易混点 | 辨析 |
+|--------|------|
+| 「平均 O(1)」的前提 | 不是免费的：要求哈希函数近似均匀（理论上用独立均匀哈希或全域哈希），且 n = O(m) |
+| 哈希表 vs 红黑树 | 哈希表：无序字典，平均 O(1)；红黑树：有序字典（MIN/SUCCESSOR/范围查），最坏 O(lg n)。要排序/范围查询只能用后者 |
+| 除法 vs 乘法 vs multiply-shift | 除法：快但 m 要选好质数；乘法：对 m 不敏感但有浮点；multiply-shift：乘法的整数实现，m = 2ˡ，三条指令，工程首选 |
+| 全域哈希 ≠ 好的固定哈希 | 全域是「随机选函数」的分布性质（对任意键对冲突率 ≤ 1/m），防的是恶意输入，不是让某一次运行更均匀 |
+| 开放定址的删除 | 置 NIL 会断链（别人的查找提前终止）；墓碑法会污染性能；只有线性探测能无墓碑删除（前移填补） |
+| 二次探测的坑 | c₁、c₂ 与 m 搭配不当会导致探测序列覆盖不满 m 个槽——插不进不等于表满 |
+| h₂(k) 为什么要与 m 互质 | 若 gcd(h₂(k), m) = d > 1，探测序列只走 m/d 个槽就绕回起点（习题 11.4-5） |
+| 生日悖论的启示 | 冲突是常态（√m 个键即约 40% 冲突率），冲突解决策略才是主战场 |
 
-    E --> F["数据量变化大?"]
-    F -->|是| G["链地址法<br/>动态扩容"]
-    F -->|否| H["开放定址法<br/>空间紧凑"]
+### 9.3 工程实践：标准库是怎么做的
 
-    G --> I["选择合适初始容量<br/>减少再哈希次数"]
+| 实现 | 冲突策略 | 要点 |
+|------|----------|------|
+| Java `HashMap` | 链地址 | 容量恒为 2 的幂（`hash & (n−1)` 代替取模）；扰动函数 `h ^ (h >>> 16)` 混合高低位；**链表长 ≥ 8 且容量 ≥ 64 时转红黑树**（第 13 章），把该桶最坏查找降到 O(lg n)；装载因子阈值 0.75 |
+| Java `Hashtable` | 链地址 | 遗留类，方法级 synchronized，不许 null 键值——新代码别用 |
+| Python `dict` | 开放定址（扰动探测） | 3.7+ 起按键插入顺序迭代；小整数、短字符串有缓存优化 |
+| C++ `unordered_map` | 链地址 | 标准只保证平均 O(1) |
 
-    H --> J["选择探测方法"]
-    J --> K["线性探测<br/>简单但易聚集"]
-    J --> L["双重哈希<br/>最优但复杂"]
-```
+> LeetCode 实战直接用 `HashMap` / `HashSet` / `dict` / `set`；需要有序时再换 `TreeMap` / `SortedDict`（那是第 13 章的地盘）。
 
-### 8.3 核心思想提炼
-
-**哈希表的本质**：通过哈希函数将键映射到数组索引，实现"一步到位"的数据访问。
-
-```
-键 → 哈希函数 → 桶索引 → 访问 → O(1)
-
-关键技巧：
-1. 好的哈希函数：均匀分布、快速计算
-2. 冲突解决：链地址法或开放定址法
-3. 动态扩容：保持装载因子在合理范围
-```
+> 哈希思想的其他应用（了解即可）：**布隆过滤器**——位数组 + k 个哈希函数，「可能存在 / 一定不存在」，空间极省的集合成员判定（缓存穿透防护、爬虫去重）；**一致性哈希**——把键和机器映射到同一哈希环上，加减机器只影响相邻弧段，是分布式负载均衡的标配。
 
 ---
 
-## 九、举一反三
+## 十、精选习题与题单
 
-### 9.1 同类 LeetCode 题目
+### 10.1 LeetCode 题单（哈希表实战）
 
-| 题目 | 难度 | 核心技巧 |
-|-----|-----|---------|
-| 1. 两数之和 | Easy | 哈希表一次遍历 |
-| 49. 字母异位词分组 | Medium | 自定义哈希函数 |
-| 128. 最长连续序列 | Medium | 哈希表 + 集合 |
-| 146. LRU 缓存 | Medium | 哈希表 + 双向链表 |
-| 295. 数据流的中位数 | Hard | 两个堆 + 哈希表 |
-| 380. O(1) 时间插入删除获取随机 | Medium | 哈希表 + 数组 |
+| 题号 | 题目 | 难度 | 考点 |
+|------|------|------|------|
+| 1 | 两数之和 | 简单 | 边遍历边存「已见值 → 下标」，O(n) 替代双重循环 |
+| 217 | 存在重复元素 | 简单 | HashSet 判重 |
+| 242 | 有效的字母异位词 | 简单 | 计数数组当哈希表（键宇宙小 → 直接寻址思想） |
+| 49 | 字母异位词分组 | 中等 | 自定义哈希键：排序串 / 计数签名 |
+| 36 | 有效的数独 | 中等 | 行、列、宫三组哈希集合并行判重 |
+| 128 | 最长连续序列 | 中等 | HashSet + 「只从序列起点扩张」剪枝，O(n) |
+| 380 | O(1) 时间插入、删除和随机获取元素 | 中等 | 哈希表（值→下标）+ 动态数组（下标→值），删除用「与末尾交换」 |
+| 146 | LRU 缓存 | 中等 | 哈希表 O(1) 定位 + 双向链表 O(1) 调序（第 10 章链表的组合应用） |
+| 705 / 706 | 设计哈希集合 / 哈希映射 | 简单 | 本章 §八 的直接考场版 |
 
-### 9.2 变形题目
+### 10.2 CLRS 习题快问快答（第四版题号）
 
-**1. 设计一个支持 O(1) 时间获取随机元素的数组**
+| 习题 | 要点 |
+|------|------|
+| 11.1-2 | 位向量做直接寻址：槽 k = 1 位表示「键 k 在集合中」，三操作全 O(1)，空间仅 m 位 |
+| 11.1-4 | 巨大数组免初始化：附加「栈数组 S + 双向指针对拍」——T[k] 里的值 j 合法当且仅当 1 ≤ j ≤ top 且 S[j] = k |
+| 11.2-1 | n 个键、m 个槽、独立均匀哈希：期望冲突对数 = C(n,2)·(1/m) = n(n−1)/(2m) |
+| 11.2-2 | m = 9 头插 5,28,19,15,20,33,12,17,10 → 见 §5.3 表 |
+| 11.2-3 | 链改有序：查找删除不变、插入变 Θ(1+α)，无渐进收益（见 §5.2） |
+| 11.2-5 | \|U\| > (n−1)m ⇒ 鸽巢原理：U 中必有 n 个键全部同槽 ⇒ 最坏查找 Θ(n) 不可避免 |
+| 11.3-3 | m = 2ᵖ−1、按 2ᵖ 进制读字符串：因 2ᵖ ≡ 1 (mod 2ᵖ−1)，字符贡献与位置无关 ⇒ **变位词必同哈希**——做拼写检查表就是灾难 |
+| 11.3-4 | m = 1000、A = (√5−1)/2：61→700, 62→318, 63→936, 64→554, 65→172（§3.3） |
+| 11.4-1 | m = 11 插入 10,22,31,4,15,28,17,88,59：线性探测 [22,88,—,—,4,15,28,17,59,31,10]；双重哈希 h₂=1+(k mod 10)：[22,—,59,17,4,15,28,88,—,31,10] |
+| 11.4-3 | α = 3/4：失败 ≤ 4、成功 ≤ 1.85；α = 7/8：失败 ≤ 8、成功 ≤ 2.38 |
+| 11.4-4 | α = 1（满表）时成功查找期望探测 = 调和数 H_m ≈ ln m |
+| 11.4-5 | 双重哈希中 gcd(h₂(k), m) = d ⇒ 探测序列只覆盖 1/d 的表就回到 h₁(k)；d = 1 才能搜遍全表 |
 
-```java
-import java.util.*;
+### 10.3 思考题与章末注记（第四版）
 
-class RandomizedSet {
-    private Map<Integer, Integer> valToIndex;
-    private List<Integer> nums;
-    private Random random;
+**思考题 11-1 最长探测界**：开放定址、n ≤ m/2、理想假设下，任意一次插入超过 2 lg n 次探测的概率 O(1/n²)；所有插入中的最长探测序列期望 O(lg n)。
 
-    public RandomizedSet() {
-        valToIndex = new HashMap<>();
-        nums = new ArrayList<>();
-        random = new Random();
-    }
+**思考题 11-2 静态集合搜索**：n 个键只查不增删——排序 + 二分是 O(lg n) 最坏、零额外空间；若改用开放定址想让**失败**查找平均也达到 O(lg n)，由 1/(1−α) ≤ lg n 解出需要 m − n = Ω(n / lg n) 的额外槽。
 
-    public boolean insert(int val) {
-        if (valToIndex.containsKey(val)) return false;
-        valToIndex.put(val, nums.size());
-        nums.add(val);
-        return true;
-    }
+**思考题 11-3 链地址的最长链**：n 槽 n 键，最长链的期望 E[M] = O(lg n / lg lg n)（Stirling 放缩 + 联合界）——这就是 Java 树化阈值 8 背后的量级直觉（α ≈ 1 时最长链远超 8 的概率极小）。
 
-    public boolean remove(int val) {
-        if (!valToIndex.containsKey(val)) return false;
+**思考题 11-4 哈希与认证**：2-独立族必为全域族；族 `h_a(x) = Σ aⱼxⱼ mod p` 全域但不 2-独立（全零键恒映射到 0）；加偏移 b 后即 2-独立；由此得消息认证码：对手伪造 (m′, t′) 骗过 Bob 的概率 ≤ 1/p，与算力无关。
 
-        int index = valToIndex.get(val);
-        int lastVal = nums.get(nums.size() - 1);
-
-        // 交换删除
-        nums.set(index, lastVal);
-        valToIndex.put(lastVal, index);
-
-        nums.remove(nums.size() - 1);
-        valToIndex.remove(val);
-
-        return true;
-    }
-
-    public int getRandom() {
-        return nums.get(random.nextInt(nums.size()));
-    }
-}
-```
-
-### 9.3 哈希思想的迁移应用
-
-```mermaid
-graph TD
-    subgraph HashApplications
-    A["哈希表"] --> B["数据库索引<br/>B+ Tree 变体"]
-    A --> C["密码学<br/>SHA-256, MD5"]
-    A --> D["一致性哈希<br/>分布式系统"]
-    A --> E["布隆过滤器<br/>空间高效集合"]
-    A --> F["数据指纹<br/>去重/校验"]
-
-    B --> G["快速查找<br/>范围查询"]
-
-    C --> H["数字签名<br/>完整性验证"]
-
-    D --> I["负载均衡<br/>故障转移"]
-
-    E --> J["垃圾邮件检测<br/>爬虫去重"]
-    end
-
-    style A fill:#ff9,stroke:#333
-```
+**章末注记（历史）**：哈希表与链地址法由 **Luhn**（1953）发明，**Amdahl** 同期提出开放定址；随机预言机概念来自 Bellare 等；**Carter & Wegman**（1979）提出全域哈希族；multiply-shift 由 **Dietzfelbinger** 等发明；**Thorup** 证明 5-独立下线性探测期望常数时间并给出线性探测删除法；**Fredman-Komlós-Szemerédi** 的静态**完美哈希**（无冲突，第三版正文内容，第四版移入注记）；第四版新增的 wee 哈希函数基于 RC6 加密算法，专为分层内存设计——一次函数求值比随机探一个槽还快 2~10 倍。
 
 ---
 
-## 附录：完整代码模板
-
-### Java 模板
-
-```java
-/**
- * 链地址法哈希表模板
- */
-public class HashMapTemplate<K, V> {
-    private static class Node<K, V> {
-        K key;
-        V value;
-        Node<K, V> next;
-        Node(K k, V v) { key = k; value = v; }
-    }
-
-    private final int m;
-    private final List<Node<K, V>> table;
-    private int size;
-
-    public HashMapTemplate(int m) {
-        this.m = m;
-        this.table = new ArrayList<>(m);
-        for (int i = 0; i < m; i++) table.add(null);
-    }
-
-    private int hash(K key) {
-        return (key.hashCode() & 0x7fffffff) % m;
-    }
-
-    public void put(K key, V value) {
-        int idx = hash(key);
-        Node<K, V> node = table.get(idx);
-        while (node != null) {
-            if (node.key.equals(key)) {
-                node.value = value;
-                return;
-            }
-            node = node.next;
-        }
-        Node<K, V> newNode = new Node<>(key, value);
-        newNode.next = table.get(idx);
-        table.set(idx, newNode);
-        size++;
-    }
-
-    public V get(K key) {
-        int idx = hash(key);
-        Node<K, V> node = table.get(idx);
-        while (node != null) {
-            if (node.key.equals(key)) return node.value;
-            node = node.next;
-        }
-        return null;
-    }
-
-    public boolean remove(K key) {
-        int idx = hash(key);
-        Node<K, V> node = table.get(idx);
-        Node<K, V> prev = null;
-        while (node != null) {
-            if (node.key.equals(key)) {
-                if (prev == null) table.set(idx, node.next);
-                else prev.next = node.next;
-                size--;
-                return true;
-            }
-            prev = node;
-            node = node.next;
-        }
-        return false;
-    }
-
-    public int size() { return size; }
-}
-```
-
----
-
-## 七、LeetCode 练习题
-
-### 7.1 基础哈希表应用
-
-**题目 1：两数之和**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [1. 两数之和](https://leetcode.cn/problems/two-sum/) |
-| 难度 | 简单 |
-| 核心思路 | 边遍历边用哈希表存储已访问元素，实现 O(n) 时间查找 |
+## 十一、本章要点回顾
 
 ```mermaid
 flowchart TD
-    A["遍历数组"] --> B["当前元素 x"]
-    B --> C["检查 target - x 是否在哈希表中"]
-    C -->|是| D["返回 [已存索引, 当前索引]"]
-    C -->|否| E["将 x 存入哈希表"]
-    E --> A
+    A["字典问题<br/>INSERT / SEARCH / DELETE"] --> B["哈希表 = 直接寻址<br/>+ 哈希函数压缩"]
+    B --> C["哈希函数"]
+    B --> D["冲突解决"]
+    C --> E["除法 / 乘法 /<br/>multiply-shift / 全域哈希"]
+    D --> F["链地址法<br/>查找 Θ(1+α)"]
+    D --> G["开放定址法<br/>探测序列"]
+    G --> H["线性 / 二次 / 双重<br/>失败 ≤ 1÷(1−α)"]
+    F --> I["n=O(m) 时<br/>平均 O(1)"]
+    H --> I
 
-    style A fill:#ff9,stroke:#333
-    style C fill:#9ff,stroke:#333
-    style D fill:#9f9,stroke:#333
+    classDef start fill:#FFE082,stroke:#F9A825,color:#1f1f1f
+    classDef proc fill:#80DEEA,stroke:#0097A7,color:#1f1f1f
+    classDef key fill:#CE93D8,stroke:#7B1FA2,color:#1f1f1f
+    classDef good fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    class A start
+    class B,C,D proc
+    class F,G key
+    class E,H proc
+    class I good
 ```
 
-**题目 2：设计哈希映射**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [706. 设计哈希映射](https://leetcode.cn/problems/design-hashmap/) |
-| 难度 | 简单 |
-| 核心思路 | 链地址法实现基本的 put、get、remove 操作 |
-
-```mermaid
-flowchart TD
-    subgraph HashMapStructure
-    A["HashMap"] --> B["数组 table"]
-    B --> C["桶[0] 链表"]
-    B --> D["桶[1] 链表"]
-    B --> E["..."]
-    B --> F["桶[m-1] 链表"]
-
-    A --> G["put: 计算哈希 → 遍历链表 → 更新/插入"]
-    A --> H["get: 计算哈希 → 遍历链表 → 返回值"]
-    A --> I["remove: 计算哈希 → 遍历链表 → 删除节点"]
-    end
-
-    style A fill:#ff9,stroke:#333
-    style G fill:#9ff,stroke:#333
-    style H fill:#9ff,stroke:#333
-    style I fill:#9ff,stroke:#333
-```
-
-### 7.2 中级哈希表应用
-
-**题目 3：字母异位词分组**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [49. 字母异位词分组](https://leetcode.cn/problems/group-anagrams/) |
-| 难度 | 中等 |
-| 核心思路 | 将字符串排序（或字符计数）作为哈希键，异位词得到相同的键 |
-
-```mermaid
-flowchart LR
-    subgraph Grouping
-    Input1["eat"] --> Sort1["aet"]
-    Input2["tea"] --> Sort1
-    Input3["ate"] --> Sort1
-    Input4["tan"] --> Sort2["ant"]
-    Input5["nat"] --> Sort2
-
-    Sort1 --> Group1["[eat, tea, ate]"]
-    Sort2 --> Group2["[tan, nat]"]
-    end
-
-    style Input1 fill:#ff9,stroke:#333
-    style Input2 fill:#ff9,stroke:#333
-    style Input3 fill:#ff9,stroke:#333
-    style Group1 fill:#9f9,stroke:#333
-    style Group2 fill:#9f9,stroke:#333
-```
-
-**题目 4：最长连续序列**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [128. 最长连续序列](https://leetcode.cn/problems/longest-consecutive-sequence/) |
-| 难度 | 中等 |
-| 核心思路 | 用 HashSet 去重，对于每个数只从序列起点开始探索，避免重复计算 |
-
-```mermaid
-flowchart TD
-    A["将所有元素加入 HashSet"] --> B["遍历每个元素 x"]
-    B --> C{"x-1 不在集合中？"}
-    C -->|否| B
-    C -->|是| D["x 是序列起点，从 x 开始向后探索"]
-    D --> E["记录序列长度"]
-    E --> F["更新最长长度"]
-
-    style A fill:#ff9,stroke:#333
-    style C fill:#9ff,stroke:#333
-    style E fill:#9f9,stroke:#333
-    style F fill:#9f9,stroke:#333
-```
-
-**题目 5：O(1) 时间插入、删除和随机获取元素**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [380. O(1) 时间插入、删除和随机获取元素](https://leetcode.cn/problems/insert-delete-getrandom-o1/) |
-| 难度 | 中等 |
-| 核心思路 | 哈希表存储值到索引的映射，数组存储值实现随机访问 |
-
-```mermaid
-flowchart TD
-    subgraph DataStructure
-    A["HashMap val → index"]
-    B["ArrayList values"]
-    end
-
-    A -->|"O(1) 查找"| C["insert: 添加到数组末尾，更新哈希表"]
-    A -->|"O(1) 查找"| D["remove: 与末尾元素交换，删除末尾"]
-    B -->|"O(1) 随机"| E["getRandom: 随机选择数组元素"]
-
-    style A fill:#9ff,stroke:#333
-    style B fill:#9ff,stroke:#333
-    style C fill:#9f9,stroke:#333
-    style D fill:#9f9,stroke:#333
-    style E fill:#9f9,stroke:#333
-```
-
-### 7.3 高级设计题
-
-**题目 6：LRU 缓存**
-
-| 属性 | 内容 |
-|-----|------|
-| 题目 | [146. LRU 缓存](https://leetcode.cn/problems/lru-cache/) |
-| 难度 | 中等 |
-| 核心思路 | 哈希表 O(1) 查找 + 双向链表 O(1) 调整顺序 |
-
-```mermaid
-flowchart TD
-    subgraph LRUCache
-    A["HashMap key → Node"]
-    B["双向链表<br/>头部 ←→ 最新 ←→ ... ←→ 最旧 ←→ 尾部"]
-    end
-
-    A -->|"put(key,v)"| C["key 存在: 更新值，移到头部"]
-    A -->|"put(key,v)"| D["key 不存在: 新建节点插入头部"]
-    D --> E["容量满时: 删除尾部节点"]
-
-    A -->|"get(key)"| F["找到: 移到头部，返回值"]
-    A -->|"get(key)"| G["未找到: 返回 -1"]
-
-    style A fill:#ff9,stroke:#333
-    style B fill:#9ff,stroke:#333
-    style C fill:#9f9,stroke:#333
-    style F fill:#9f9,stroke:#333
-```
-
----
-
-**哈希表是算法世界中最伟大的发明之一，它将"大海捞针"变成了"直取目标"。理解哈希函数的设计原则和冲突解决策略，是掌握高效数据结构的关键。**
-
-下一章：第十二章——二叉搜索树（BST）
+**一句话记忆**：
+- 哈希表用哈希函数把键**算成**下标，字典操作平均 O(1)；冲突不可避免（生日悖论：√m 个键就约 40% 冲突率），所以核心设计是**冲突解决**；
+- **链地址**：同槽串链表，α = n/m，查找 Θ(1+α)，删除友好；**开放定址**：元素全在表里按探测序列找空位，α < 1，失败探测 ≤ 1/(1−α)，缓存友好但删除麻烦；
+- 防恶意输入用**全域哈希**（随机选函数，任意键对冲突率 ≤ 1/m）；装载因子超阈值就翻倍重哈希，均摊仍是 O(1)。

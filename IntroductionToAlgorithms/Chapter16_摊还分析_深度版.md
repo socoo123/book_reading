@@ -1,735 +1,384 @@
 # 第十六章：摊还分析（Amortized Analysis）
 
-## 一、什么是摊还分析
-
-### 1.1 问题的引入
-
-**为什么需要摊还分析？**
-
-在分析算法复杂度时，我们通常关注**最坏情况**或**平均情况**。但有一类数据结构，单个操作可能很昂贵（如动态数组扩容），不过这种昂贵操作发生的频率很低。摊还分析就是用来分析这类"偶尔昂贵、经常便宜"操作的平均代价。
-
-```mermaid
-flowchart TD
-    A["摊还分析的目标"] --> B["计算 n 个操作的平均代价"]
-    A --> C["不考虑最坏情况的极端值"]
-    A --> D["关注整体性能而非单次操作"]
-
-    B --> E["总代价 / n = 摊还代价"]
-
-    style A fill:#ffff99,stroke:#333
-    style E fill:#99ff99,stroke:#333
-```
-
-**经典例子：动态数组扩容**
-
-```mermaid
-flowchart TD
-    subgraph 动态数组扩张
-    A["容量 1<br/>插入 1 个元素"] -->|"无复制"| B["容量 2<br/>插入 2 个元素"]
-    B -->|"无复制"| C["容量 4<br/>插入 4 个元素"]
-    C -->|"复制 4 个"| D["容量 8<br/>插入 8 个元素"]
-    D -->|"复制 8 个"| E["容量 16<br/>插入 16 个元素"]
-    end
-
-    style A fill:#99ff99,stroke:#333
-    style B fill:#99ff99,stroke:#333
-    style C fill:#99ff99,stroke:#333
-    style D fill:#ff9999,stroke:#333
-    style E fill:#ff9999,stroke:#333
-```
-
-**直观分析**：
-- 前 7 次插入：O(1) 每次
-- 第 8 次插入：O(8) 复制 + 插入
-- 如果只看最坏情况：O(n)
-- 但摊还到每次插入：远小于 O(n)
-
-### 1.2 摊还分析的三种方法
-
-```mermaid
-flowchart TD
-    A["摊还分析方法"] --> B["聚合分析<br/>Aggregate Analysis"]
-    A --> C["记账方法<br/>Accounting Method"]
-    A --> D["势能方法<br/>Potential Method"]
-
-    B --> B1["计算 n 个操作的总代价<br/>T(n)/n 得到摊还代价"]
-    C --> C1["为每个操作分配"credit"<br/>存款多于实际花费"]
-    D --> D1["定义势函数<br/>用势能变化衡量代价"]
-
-    style A fill:#ffff99,stroke:#333
-    style B fill:#99ffff,stroke:#333
-    style C fill:#99ffff,stroke:#333
-    style D fill:#99ffff,stroke:#333
-```
+> **定位**：想象你加入 Buff 健身房——月费 \$60，每次去再付 \$3。十一月你每天都去，于是这个月总共花了 \$60 + \$90 = \$150，**摊到 30 天每天 \$5**（其中 \$2 是把月费摊还到每天，\$3 是每天的实际开销）。摊还分析对算法做同样的事：**把一串操作的总代价平均到每次操作上**，证明「平均每次都很便宜」，哪怕其中某几次可能很贵。
+>
+> 关键区别：摊还分析**不涉及概率**——它是对**任意**操作序列的最坏情况做平均，给出确定性保证；而「平均情况分析」要假设输入服从某种概率分布。本章用同一个例子（栈、二进制计数器）展示**三种等价方法**：聚合分析、记账法、势能法，再用势能法分析**动态表**（即 `ArrayList`/`vector` 的扩容原理）。
+>
+> **前后指针**：栈见**§10.1.3**；习题 16.3-3（堆的摊还）用到**第 6 章**；16.3-6（删掉较大一半）用到**第 9 章 SELECT**；§16.4 的 load factor 借自**第 11 章哈希**。摊还分析的两大明星应用——**不相交集合（Ch 19，α(n)）**和动态表——都靠这套方法证明其「看似最坏很贵、实则摊还廉价」。斐波那契堆第四版已删，不展开。
+>
+> 对照第四版书页 448–470。
 
 ---
 
-## 二、聚合分析（Aggregate Analysis）
+## 一、为什么要摊还分析
 
-### 2.1 栈操作的摊还分析
+单看最坏情况常常**高估**真实性能。动态数组扩容时一次插入要复制全部 n 个元素（最坏 O(n)），但这种「灾难」极少发生；绝大多数插入只是 O(1)。摊还分析正是要把偶尔的昂贵操作**摊平**到大量廉价操作上。
 
-**栈的基本操作**：
-- `PUSH(S, x)`: O(1)
-- `POP(S)`: O(1)
-- `MULTIPOP(S, k)`: 弹出 k 个元素或栈空为止
+| 分析角度 | 看什么 | 是否涉及概率 | 动态数组插入的结论 |
+|---------|--------|-------------|--------------------|
+| 最坏情况 | 单次操作最坏 | 否 | O(n)（扩容那一次） |
+| 平均情况 | 输入按某分布的期望 | **是** | — |
+| 摊还 | **任意** n 次操作的总代价 / n | **否** | **O(1)** |
 
-```java
-/**
- * 多重弹出操作
- * 每次调用可能弹出多个元素
- */
-void multiPop(Stack S, int k) {
-    while (!isEmpty(S) && k > 0) {
-        POP(S);
-        k--;
-    }
-}
+> **一句话**：摊还分析保证「对任意操作序列，平均每次的操作代价很小」——这是确定性的，不是「期望」。
+
+三种方法只是同一个摊还上界的不同证法，**结论一致**：
+
+| 方法 | 怎么算 | 形象 |
+|------|--------|------|
+| 聚合分析 | 直接算 n 次操作的总代价 T(n)，摊还代价 = T(n)/n | 算总账再除 |
+| 记账法 | 给每次操作定一个「摊还收费」，多收的存进数据结构当存款 | 预付费储值卡 |
+| 势能法 | 定义势函数 Φ，摊还代价 = 实际代价 + ΔΦ | 把存款看作「势能」 |
+
+---
+
+## 二、聚合分析（§16.1）
+
+对任意 n 次操作，先证总代价上界 T(n)，再令每次操作的摊还代价 = T(n)/n。**所有操作共享同一个摊还代价**。
+
+### 2.1 栈与 MULTIPOP
+
+普通栈 PUSH、POP 各 O(1)。加一个 `MULTIPOP(S, k)`：弹出栈顶 k 个（不足则全弹出）。
+
+```
+MULTIPOP(S, k)
+1  while not STACK-EMPTY(S) and k > 0
+2      POP(S)
+3      k = k - 1
 ```
 
-**分析 n 次栈操作的总代价**：
+**粗略分析（不紧）**：一次 MULTIPOP 最坏 O(n)（k 很大、栈很满），n 次操作最坏 O(n²)。
 
-```mermaid
-flowchart TD
-    A["n 次栈操作"] --> B["PUSH 次数 ≤ n"]
-    A --> C["POP 次数 ≤ n"]
-    A --> D["MULTIPOP 中的 POP 次数 ≤ n"]
+**聚合分析（紧）**：每个元素**最多被 PUSH 一次、被 POP 一次**。所以 n 次操作里，所有 POP（含 MULTIPOP 内部的 POP）总次数 ≤ PUSH 次数 ≤ n。总代价 ≤ n（PUSH）+ n（POP）= **2n** → 摊还代价 = 2n/n = **O(1)**。
 
-    B --> E["因为每个元素最多被 PUSH 一次"]
-    C --> E
-    D --> E
-
-    E --> F["总代价 T(n) ≤ 2n"]
-    F --> G["摊还代价 = T(n)/n ≤ 2"]
-
-    style A fill:#ffff99,stroke:#333
-    style F fill:#99ff99,stroke:#333
-    style G fill:#99ff99,stroke:#333
-```
-
-**关键洞察**：每个元素最多被弹出一次，所以所有 POP 操作的总数不超过 n 次。
+> **关键洞察**：贵的操作（大 MULTIPOP）会「消耗」之前 PUSH 攒下的元素；元素总数守恒，于是贵的操作不可能频繁发生。
 
 ### 2.2 二进制计数器递增
 
-**问题**：从 0 递增到 n，需要多少次比特翻转？
-
-```java
-/**
- * 二进制计数器递增
- * 每次操作可能翻转多个比特
- */
-void increment(Counter A, int n) {
-    int i = 0;
-    while (i < n && A[i] == 1) {
-        A[i] = 0;  // 翻转 1 -> 0
-        i++;
-    }
-    if (i < n) {
-        A[i] = 1;  // 翻转 0 -> 1
-    }
-}
-```
-
-**可视化分析**：
+k 位计数器从 0 开始反复 `INCREMENT`（加 1）。代价 = 翻转的位数。
 
 ```
-初始: 0000
-+1:   0001  (翻转 1 位)
-+2:   0010  (翻转 2 位: 1->0, 0->1)
-+3:   0011  (翻转 1 位)
-+4:   0100  (翻转 3 位)
-+5:   0101  (翻转 1 位)
-+6:   0110  (翻转 2 位)
-+7:   0111  (翻转 1 位)
-+8:   1000  (翻转 4 位)
+INCREMENT(A, k)
+1  i = 0
+2  while i < k and A[i] == 1
+3      A[i] = 0        // 1→0（进位）
+4      i = i + 1
+5  if i < k
+6      A[i] = 1        // 0→1
 ```
 
-```mermaid
-flowchart TD
-    A["n 次递增操作"] --> B["统计每个比特的翻转次数"]
+4 位计数器前 8 次递增的 trace（**深色**为本轮翻转的位）：
 
-    B --> C["最低位: 每次操作都可能翻转<br/>n 次"]
-    B --> D["第 2 位: 每 2 次操作翻转 1 次<br/>n/2 次"]
-    B --> E["第 3 位: 每 4 次操作翻转 1 次<br/>n/4 次"]
-    B --> F["第 k 位: 每 2^k 次操作翻转 1 次<br/>n/2^k 次"]
+| 递增后值 | b₃ b₂ b₁ b₀ | 本轮翻转数 |
+|---------|-------------|-----------|
+| 0 | 0 0 0 0 | — |
+| 1 | 0 0 0 **1** | 1 |
+| 2 | 0 0 **1 0** | 2 |
+| 3 | 0 0 1 **1** | 1 |
+| 4 | 0 **1 0 0** | 3 |
+| 5 | 0 1 0 **1** | 1 |
+| 6 | 0 1 **1 0** | 2 |
+| 7 | 0 1 1 **1** | 1 |
+| 8 | **1 0 0 0** | 4 |
 
-    C --> G["总翻转次数 = n + n/2 + n/4 + ... + 1"]
-    D --> G
-    E --> G
-    F --> G
+前 8 次共翻转 1+2+1+3+1+2+1+4 = **15 次 < 2·8 = 16**。
 
-    G --> H["总和 < 2n"]
-    H --> I["摊还代价 = 2n/n = O(1)"
+**一般证明**：第 i 位每 2ⁱ 次递增才翻转一次，n 次递增中第 i 位翻转 ⌊n/2ⁱ⌋ 次。总翻转数：
 
-    style A fill:#ffff99,stroke:#333
-    style H fill:#99ff99,stroke:#333
-    style I fill:#99ff99,stroke:#333
+```
+Σ_{i≥0} ⌊n/2ⁱ⌋ < n · Σ_{i≥0} (1/2ⁱ) = n · 2 = 2n   →   摊还代价 = 2n/n = O(1)
 ```
 
-**几何级数求和**：
-```
-∑(n/2^k) = n(1 + 1/2 + 1/4 + ...) < n * 2 = 2n
-```
-
-### 2.3 动态数组扩张
-
-**核心操作**：
-1. 当数组满时，创建新数组（容量翻倍）
-2. 将所有元素复制到新数组
-
-```java
-/**
- * 动态数组插入（摊还 O(1)）
- */
-class DynamicArray {
-    private int[] array;
-    private int size;
-    private int capacity;
-
-    void insert(int x) {
-        if (size == capacity) {
-            // 扩容：创建新数组，复制元素
-            int[] newArray = new int[2 * capacity];
-            for (int i = 0; i < size; i++) {
-                newArray[i] = array[i];
-            }
-            array = newArray;
-            capacity *= 2;
-        }
-        array[size++] = x;
-    }
-}
-```
-
-**摊还分析**：
-
-```mermaid
-flowchart TD
-    A["插入 n 个元素"] --> B["扩容时的复制代价"]
-
-    B --> C["容量: 1 → 2 → 4 → 8 → ... → 2^k"]
-    B --> D["复制: 1 + 2 + 4 + 8 + ... + n/2 + n"]
-
-    D --> E["等比数列求和: 2n - 1"]
-    E --> F["总代价 = n(插入) + n(复制) = 2n"]
-    F --> G["摊还代价 = 2n/n = O(1)"]
-
-    style A fill:#ffff99,stroke:#333
-    style F fill:#99ff99,stroke:#333
-    style G fill:#99ff99,stroke:#333
-```
+> **LeetCode 关联**：[232. 用栈实现队列](https://leetcode.cn/problems/implement-queue-using-stacks/)——两个栈来回倒，每个元素最多被搬运 4 次，摊还 O(1)（习题 16.3-5）。
 
 ---
 
-## 三、记账方法（Accounting Method）
+## 三、记账法（§16.2）
 
-### 3.1 基本思想
+给**每种操作**定一个摊还收费 ĉᵢ。当 ĉᵢ > 实际代价 cᵢ 时，差额作为**信用（credit）**存在数据结构里；当 ĉᵢ < cᵢ 时，用存款补足。只要**总信用始终 ≥ 0**，总摊还代价就是总实际代价的上界：
 
-**记账方法的核心**：
-- 为每个操作分配一个"摊还代价"（可能高于实际代价）
-- 多余的"存款"存储在数据结构中
-- 昂贵操作时使用之前存储的存款
-
-```mermaid
-flowchart TD
-    A["记账方法"] --> B["设定摊还代价 c-hat(i)"]
-    A --> C["实际代价 c(i)"]
-    A --> D["存款变化 = c-hat(i) - c(i)"]
-
-    B --> E["存款必须非负"]
-    C --> F["总摊还代价 ≥ 总实际代价"]
-
-    E --> G["credit_i ≥ 0 对于所有 i"]
-    F --> H["∑c-hat(i) ≥ ∑c(i)"
-
-    style A fill:#ffff99,stroke:#333
+```
+Σ ĉᵢ ≥ Σ cᵢ    （对所有 n、所有操作序列成立）
 ```
 
-### 3.2 栈操作的记账分析
+### 3.1 栈：PUSH 收 2、POP/MULTIPOP 免费
 
-**设定摊还代价**：
-| 操作 | 实际代价 | 摊还代价 | 存款变化 |
-|-----|---------|---------|---------|
-| PUSH | 1 | 2 | +1 |
-| POP | 1 | 0 | -1 |
-| MULTIPOP | k | 0 | -k |
+| 操作 | 实际代价 cᵢ | 摊还收费 ĉᵢ |
+|------|------------|------------|
+| PUSH | 1 | **2** |
+| POP | 1 | 0 |
+| MULTIPOP(k) | min(s,k) | 0 |
 
-**为什么这样设定**：
-- PUSH 时多收 1 元，存起来
-- POP/PULTIPOP 时不收费，用之前的存款
+**故事**：PUSH 一只盘子时收 \$2，\$1 付当下的 push，剩 \$1 **放在这只盘子上**当存款。任何时候栈里每只盘子都压着 \$1。POP（或 MULTIPOP 里的每次 POP）免费——直接拿走盘子上那 \$1 付账。因为栈中盘子数 ≥ 0，总信用永远 ≥ 0 ✓。于是 n 次操作总摊还 ≤ 2n → 摊还 O(1)。
+
+### 3.2 二进制计数器：置位收 \$2
+
+把一个 0 位翻成 1，收 \$2：\$1 付本次翻转，另 \$1 **存在这个 1 位上**。把 1 翻回 0 时免费——用位上那 \$1 付账。任何时刻每个 1 位都挂着 \$1，故信用 ≥ 0。一次 INCREMENT 最多把**一个** 0 翻成 1，所以摊还收费 ≤ \$2 → 摊还 O(1)。
+
+> 记账法把「未来要付的账」具象成存在具体对象上的存款，直觉强；缺点是**得手动跟踪存款落在哪**。
+
+---
+
+## 四、势能法（§16.3）
+
+把存款看作整个数据结构的**势能 Φ**，不再绑定到具体对象。
+
+设第 i 次操作前结构为 Dᵢ₋₁、操作后为 Dᵢ，实际代价 cᵢ。定义势函数 Φ 把每个结构映成一个实数，**第 i 次操作的摊还代价**为：
+
+```
+ĉᵢ = cᵢ + Φ(Dᵢ) − Φ(Dᵢ₋₁)        // 实际代价 + 势能变化
+```
+
+把 n 次摊还代价求和，势能项**望远镜求和**抵消，只剩首尾：
+
+```
+Σ ĉᵢ = Σ cᵢ + Φ(Dₙ) − Φ(D₀)
+```
+
+**只要 Φ(D₀) = 0 且 Φ(Dᵢ) ≥ 0 对所有 i 成立**，则 Σ ģᵢ ≥ Σ cᵢ——总摊还代价是总实际代价的上界。势能法最强大之处：选不同的 Φ 可以**把代价在操作间重新分配**。
+
+### 4.1 栈：Φ = 栈中元素数
+
+- **PUSH**（s→s+1）：cᵢ=1，ΔΦ=+1 → ĉᵢ = 1+1 = **2**。
+- **POP**（s→s−1）：cᵢ=1，ΔΦ=−1 → ĉᵢ = 1−1 = **0**。
+- **MULTIPOP(k')**（s→s−k'）：cᵢ=k'，ΔΦ=−k' → ģᵢ = k'−k' = **0**。
+
+Φ(D₀)=0（空栈），Φ=元素数 ≥ 0 恒成立 ✓。三种操作摊还代价都是常数 → 总 O(n)。
+
+### 4.2 二进制计数器：Φ = 1 的个数
+
+设第 i 次递增把 tᵢ 个 1 翻成 0、最多把 1 个 0 翻成 1。实际代价 cᵢ ≤ tᵢ + 1。1 的个数变化 ΔΦ ≤ −tᵢ + 1。于是：
+
+```
+ĉᵢ ≤ (tᵢ+1) + (−tᵢ+1) = 2          // 与 tᵢ 无关！每次恒为 2
+```
+
+摊还代价与翻转多少位**无关**，恒为 2。势能法的妙处在此显露：昂贵操作（tᵢ 大）势能骤降、正好抵消；廉价操作（tᵢ 小）势能缓升、为未来攒钱。
+
+> **习题 16.3-3 的妙用**：对二叉小根堆取 Φ = Σ（节点深度），可证 INSERT 摊还 O(lg n)、**EXTRACT-MIN 摊还 O(1)**（删叶子释放其深度势能、sift-down 每次交换势能净变化为 0）。
+
+---
+
+## 五、动态表（§16.4）—— `ArrayList` 的原理
+
+表满了就**翻倍扩容**、把旧元素全复制过去。单次插入最坏 O(n)（触发扩容），但摊还 O(1)。用三种方法都证一遍——这是本章的压轴。
+
+### 5.1 只插入：翻倍扩容
+
+```
+TABLE-INSERT(T, x)
+1  if T.size == 0        // 首次分配 1 个槽
+2      T.table = allocate(1); T.size = 1
+3  if T.num == T.size    // 满了 → 翻倍
+4      new = allocate(2 · T.size)
+5      把 T.table 的项全复制进 new        // 代价 = T.num
+6      free T.table; T.table = new; T.size = 2·T.size
+7  把 x 插入 T.table; T.num++
+```
+
+记「基本插入」（含复制一个元素、插入新元素）代价各为 1。第 i 次操作只在 **i−1 是 2 的幂**时触发扩容：
+
+```
+cᵢ = i   若 i−1 是 2 的幂（1 次插入 + i−1 次复制）
+    = 1   否则
+```
+
+**聚合**：Σcᵢ ≤ n（每次至少 1）+ (1+2+4+…+2^⌊lg n⌋)（扩容复制，等比级数 < 2n）< **3n** → 摊还 ≤ 3。
 
 ```mermaid
 flowchart LR
-    subgraph 存款变化
-    P["PUSH<br/>实际:1 摊还:2<br/>存款 +1"] --> Q["存款余额"]
-    Q --> R["POP<br/>实际:1 摊还:0<br/>存款 -1"]
-    R --> S["MULTIPOP<br/>实际:k 摊还:0<br/>存款 -k"]
-    end
+    A["容量1<br/>1 项"] -->|"插满→<br/>复制1"| B["容量2<br/>2 项"]
+    B -->|"插满→<br/>复制2"| C["容量4<br/>4 项"]
+    C -->|"插满→<br/>复制4"| D["容量8<br/>8 项"]
+    D -->|"插满→<br/>复制8"| E["容量16<br/>…"]
 
-    style P fill:#99ffff,stroke:#333
-    style Q fill:#ffff99,stroke:#333
-    style R fill:#ff9999,stroke:#333
-    style S fill:#ff9999,stroke:#333
+    classDef cheap fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    classDef expensive fill:#EF9A9A,stroke:#C62828,color:#1f1f1f
+    class A,B,C,D,E cheap
 ```
 
-**验证**：
-- 每个元素 PUSH 时存入 1 元
-- POP 时取出 1 元
-- 存款始终非负（因为每个 POP/PULTIPOP 弹出的元素都曾被 PUSH）
+> 复制总代价是等比级数 1+2+4+… ≈ n，加上 n 次插入 ≈ **2n**（实测：插 65536 项共 131071 = 2n−1 次基本操作，与 3n 的上界吻合且更紧）。
 
-### 3.3 二进制计数器的记账分析
+**记账（为什么是 \$3）**：每次 TABLE-INSERT 收 \$3——\$1 付当下插入、\$1 存在**新元素**上（预付它下次扩容时被复制）、\$1 存在**一个已存在元素**上。下次扩容前恰好又插了 size/2 个元素，每个都带 \$1，加上原本 size/2 个元素各 \$1，正好够把 size 个元素全复制一遍。存款始终 ≥ 0 ✓。
 
-**设定摊还代价**：
-- 每次置位（0→1）：收 2 元
-- 每次清位（1→0）：收 0 元
+**势能**：令 Φ = 2·(T.num − T.size/2)（半满时 Φ=0，满了 Φ=T.size）。
+- 不扩容的插入：cᵢ=1，ΔΦ=+2 → ĉᵢ = 1+2 = **3**。
+- 触发扩容的插入：cᵢ = (i−1 次复制)+1 = i；扩容后 num=i、size=2(i−1)，Φ 从 i−1 掉到 2·i − 2(i−1) = 2，ΔΦ = 2−(i−1) = 3−i → ĉᵢ = i + (3−i) = **3**。
 
-```mermaid
-flowchart TD
-    A["递增操作"] --> B["翻转 1→0 的位<br/>不收费"]
-    A --> C["翻转 0→1 的位<br/>收 2 元"]
+两种情况摊还都恰好 3 ✓。
 
-    B --> D["每个 1→0 翻转<br/>为未来的 0→1 存 1 元"]
-    C --> E["0→1 时花费 2 元<br/>1 元用于当前翻转<br/>1 元存入"]
+### 5.2 加删除：缩容的陷阱
 
-    E --> F["总摊还代价 = 2n"
-    F --> G["实际总代价 < 2n"
-    G --> H["摊还 = 2 = O(1)"
+照搬「满翻倍」的对称策略——「不足半满就缩半」——**会崩**。考虑在半满表上反复 `插、删、删、插、插、删、删、…`：第一次插入触发扩容（size 翻倍）、紧跟两次删除触发缩容（size 减半）、再两次插入又扩容……每次扩缩都 Θ(n)，共 Θ(n) 次 → 总 Θ(n²)，摊还 Θ(n)。
 
-    style A fill:#ffff99,stroke:#333
-    style H fill:#99ff99,stroke:#333
-```
+**病根**：扩容后还没攒够势能就被删除逼着缩容，反之亦然——阈值卡在 1/2，操作序列在阈值附近反复横跳。
 
-### 3.4 动态数组的记账分析
+**正确做法**：把缩容阈值放宽到 **α < 1/4**——即「满（α=1）翻倍、不足 1/4 缩半」。这样缩容后 α=1/2，离两个阈值都有距离，无法被一两步操作反复触发。势能取分段函数（α≥1/2 时 Φ=2·(num−size/2)；α<1/2 时 Φ=size/2−num），保证扩张/收缩那一刻 Φ 恰好耗尽为 0，每种操作摊还都是常数。
 
-**设定摊还代价**：
-- 插入：收 3 元（2 元用于复制，1 元存入）
+| 操作 | 最坏 | 摊还 |
+|------|------|------|
+| TABLE-INSERT（含扩容） | O(n) | **O(1)** |
+| TABLE-DELETE（含缩容） | O(n) | **O(1)** |
 
-```mermaid
-flowchart TD
-    A["插入操作"] --> B["正常插入<br/>实际代价: 1<br/>摊还代价: 3<br/>存款 +2"]
-    A --> C["扩容时复制<br/>实际代价: k<br/>摊还代价: 0<br/>使用存款: -2k"]
-
-    B --> D["每次插入存入 2 元"]
-    C --> E["复制 k 个元素<br/>消耗 2k 元存款"]
-
-    D --> F["扩容前已有 k 次插入<br/>存款 = 2k 元"]
-    E --> F
-    F --> G["刚好够用！"
-    G --> H["总摊还代价 = 3n"
-
-    style A fill:#ffff99,stroke:#333
-    style G fill:#99ff99,stroke:#333
-    style H fill:#99ff99,stroke:#333
-```
+> 这是 Java `ArrayList`、C++ `vector`、Python `list` 的底层逻辑：扩容因子 2（或 1.5）、load factor 始终 ≥ 1/2，故 `append` 摊还 O(1)。
 
 ---
 
-## 四、势能方法（Potential Method）
+## 六、代码实现（Java + Python）
 
-### 4.1 基本思想
+> 三段独立小程序，**用实测验证摊还上界**：① 计数器总翻转 < 2n；② 动态表总操作 ≤ 3n；③ 双栈队列（习题 16.3-5）正确且总操作 ≤ 4m。
 
-势能方法使用一个**势函数** Φ 来衡量数据结构的"状态"。
-
-```mermaid
-flowchart TD
-    A["势能方法"] --> B["势函数 Φ(D_i)"]
-    A --> C["表示数据结构的"能量""]
-    A --> D["操作前状态: D_{i-1}"]
-    A --> E["操作后状态: D_i"]
-
-    B --> F["摊还代价 = 实际代价 + 势能变化"]
-    F --> G["c-hat(i) = c(i) + Φ(D_i) - Φ(D_{i-1})"]
-
-    style A fill:#ffff99,stroke:#333
-    style G fill:#99ff99,stroke:#333
-```
-
-**关键条件**：
-- Φ(D_i) ≥ 0 对于所有 i
-- Φ(D_0) = 0
-
-**摊还代价总和**：
-```
-∑c-hat(i) = ∑c(i) + Φ(D_n) - Φ(D_0) = ∑c(i) + Φ(D_n) ≥ ∑c(i)
-```
-
-### 4.2 栈操作的势能分析
-
-**势函数定义**：
-```
-Φ(栈中元素数)
-```
-
-```mermaid
-flowchart TD
-    A["栈操作"] --> B["PUSH<br/>实际代价: 1<br/>势能变化: +1<br/>摊还代价: 2"]
-    A --> C["POP<br/>实际代价: 1<br/>势能变化: -1<br/>摊还代价: 0"]
-    A --> D["MULTIPOP(k)<br/>实际代价: k<br/>势能变化: -k<br/>摊还代价: 0"]
-
-    B --> E["栈大小增加 1<br/>势能 +1"]
-    C --> E
-    D --> E
-
-    E --> F["摊还总和 = 2 × PUSH 次数"
-
-    style A fill:#ffff99,stroke:#333
-```
-
-### 4.3 二进制计数器的势能分析
-
-**势函数定义**：
-```
-Φ(i) = 计数器中 1 的个数
-```
-
-```mermaid
-flowchart TD
-    A["递增操作"] --> B["统计变化"]
-
-    B --> C["设翻转了 t 个比特"]
-    B --> D["其中 t-1 个 1→0"]
-    B --> E["1 个 0→1"]
-
-    C --> F["实际代价: t"]
-    D --> G["势能变化: - (t-1) + 1 = 2 - t"]
-    E --> G
-
-    F --> H["摊还代价 = t + (2 - t) = 2"]
-    G --> H
-
-    H --> I["每次递增的摊还代价恒为 2"
-
-    style A fill:#ffff99,stroke:#333
-    style I fill:#99ff99,stroke:#333
-```
-
-### 4.4 动态数组的势能分析
-
-**势函数定义**：
-```
-Φ(i) = 2 × size - capacity
-```
-
-当 size = capacity 时（即将扩容），Φ 达到最大值。
-
-```mermaid
-flowchart TD
-    A["插入操作"] --> B["情况 1：不需要扩容<br/>size < capacity"]
-
-    A --> C["情况 2：需要扩容<br/>size = capacity"]
-
-    B --> D["实际代价: 1"]
-    B --> E["size++, capacity 不变"]
-    B --> F["势能变化: +2"]
-    B --> G["摊还代价: 1 + 2 = 3"]
-
-    C --> H["实际代价: size (复制)"]
-    C --> I["capacity 翻倍"]
-    C --> J["size = old_size + 1"]
-    C --> K["势能变化: 2(size) - 2(2×old_size) = 2 - 2×old_size"]
-
-    H --> L["摊还代价: size + (2 - 2×old_size) = 2"]
-    K --> L
-
-    L --> M["扩容时的摊还代价也是 2！
-
-    style A fill:#ffff99,stroke:#333
-    style M fill:#99ff99,stroke:#333
-```
-
-**验证势能非负**：
-- 初始化：size = 0, capacity = 1, Φ = 0
-- 正常插入：size < capacity, Φ = 2×size - capacity ≥ 0（因为 size ≤ capacity-1）
-- 扩容时：Φ = 2×size - 2×size = 0
-
----
-
-## 三种方法对比
-
-```mermaid
-flowchart TD
-    A["三种摊还分析方法对比"] --> B["聚合分析"]
-    A --> C["记账方法"]
-    A --> D["势能方法"]
-
-    B --> B1["优点：简单直观"]
-    B --> B2["缺点：不够灵活"]
-
-    C --> C1["优点：直观理解"]
-    C --> C2["缺点：需要跟踪存款"]
-
-    D --> D1["优点：数学严谨"]
-    D --> D2["缺点：需要定义势函数"]
-
-    B1 --> E["都得到相同的摊还界限"]
-    C1 --> E
-    D1 --> E
-
-    style A fill:#ffff99,stroke:#333
-```
-
-| 方法 | 核心思想 | 适用场景 | 优点 | 缺点 |
-|-----|---------|---------|------|------|
-| 聚合分析 | 计算总代价求平均 | 多个操作的总量分析 | 简单 | 不够灵活 |
-| 记账方法 | 为操作"存款" | 需要直观解释 | 易于理解 | 需要维护存款 |
-| 势能方法 | 定义势函数 | 复杂数据结构 | 数学严谨 | 需要构造势函数 |
-
----
-
-## 五、摊还分析的应用场景
-
-### 5.1 经典应用案例
-
-```mermaid
-flowchart TD
-    A["摊还分析经典应用"] --> B["动态数组<br/>摊还 O(1) 插入"]
-    A --> C["Splay 树<br/>摊还 O(log n)"]
-    A --> D["并查集<br/>摊销 α(n)"]
-    A --> E["斐波那契堆<br/>摊销 O(1) 操作"]
-
-    B --> B1["摊还代价 = 3"]
-    C --> C1["摊还代价 = O(log n)"]
-    D --> D1["摊还代价 = 近似常数"]
-    E --> E1["多种操作的摊销分析"]
-
-    style A fill:#ffff99,stroke:#333
-```
-
-### 5.2 摊还分析与均摊复杂度
-
-```mermaid
-flowchart TD
-    A["时间复杂度分类"] --> B["最坏情况<br/>T(n) = max{cost of any sequence of n ops}"]
-    A --> C["平均情况<br/>T(n) = E[cost of any sequence of n ops]"]
-    A --> D["摊还情况<br/>T(n) = total cost / n"]
-
-    B --> E["例如：快速排序 O(n²) 最坏"]
-    C --> F["例如：随机快速排序 O(n log n) 平均"]
-    D --> G["例如：动态数组 O(1) 摊还"
-
-    style D fill:#99ffff,stroke:#333
-    style G fill:#99ff99,stroke:#333
-```
-
-**摊还分析 vs 平均情况分析**：
-- 摊还分析不涉及概率，是确定性的
-- 摊还分析关注最坏情况下的平均性能
-- 平均情况分析涉及输入的概率分布
-
-### 5.3 摊还分析与复杂度下界
-
-```mermaid
-flowchart TD
-    A["摊还分析的价值"] --> B["证明整体复杂度低于最坏情况"]
-    A --> C["指导数据结构设计"]
-    A --> D["理解数据结构的"均摊"行为"]
-
-    B --> E["动态数组插入：最坏 O(n)，摊还 O(1)"]
-    C --> F["设计"cheap + rare expensive"的结构"]
-    D --> G["为什么某些结构在实际中表现良好"
-
-    style A fill:#ffff99,stroke:#333
-```
-
----
-
-## 六、复杂度对比总结
-
-| 数据结构/操作 | 最坏情况 | 摊还情况 | 说明 |
-|--------------|---------|---------|------|
-| 动态数组插入 | O(n) | O(1) | 扩容时复制所有元素 |
-| 二进制计数器递增 | O(log n) | O(1) | 一次可能翻转多位 |
-| 栈的 MULTIPOP | O(n) | O(1) | 单次可能弹出多个 |
-| Splay 树操作 | O(n) | O(log n) | 摊还复杂度优秀 |
-
----
-
-## 七、代码实现
-
-### 7.1 动态数组（摊还 O(1) 插入）
+### 6.1 二进制计数器 + 动态表（Java）
 
 ```java
-/**
- * 动态数组 - 摊还分析示例
- * 摊还复杂度：O(1) 插入
- */
-public class DynamicArray<T> {
-    private Object[] array;
-    private int size;
-    private int capacity;
-
-    public DynamicArray() {
-        array = new Object[1];
-        capacity = 1;
-        size = 0;
-    }
-
-    /**
-     * 摊还分析：
-     * - 正常插入：摊还代价 3
-     * - 扩容时：摊还代价 2
-     * 总摊还代价 ≤ 3n
-     */
-    public void add(T element) {
-        if (size == capacity) {
-            resize(2 * capacity);  // 扩容
+import java.util.*;
+public class Amortized {
+    // 计数器：n 次递增的总翻转数 < 2n
+    static int counterFlips(int n, int[] bits) {
+        int total = 0;
+        for (int op = 0; op < n; op++) {
+            int i = 0;
+            while (i < bits.length && bits[i] == 1) { bits[i] = 0; total++; i++; }
+            if (i < bits.length) { bits[i] = 1; total++; }
         }
-        array[size++] = element;
+        return total;
     }
-
-    private void resize(int newCapacity) {
-        Object[] newArray = new Object[newCapacity];
-        for (int i = 0; i < size; i++) {
-            newArray[i] = array[i];
-        }
-        array = newArray;
-        capacity = newCapacity;
-    }
-
-    public int size() {
-        return size;
-    }
-
-    public int capacity() {
-        return capacity;
-    }
-}
-```
-
-### 7.2 二进制计数器（摊还 O(1) 递增）
-
-```java
-/**
- * 二进制计数器 - 摊还分析示例
- * 摊还复杂度：O(1) 递增
- */
-public class BinaryCounter {
-    private boolean[] bits;
-    private int n;
-
-    public BinaryCounter(int size) {
-        bits = new boolean[size];
-        n = size;
-    }
-
-    /**
-     * 摊还分析：
-     * - 每次递增的摊还代价为 2
-     * - 总代价 ≤ 2n
-     */
-    public void increment() {
-        int i = 0;
-        while (i < n && bits[i]) {
-            bits[i] = false;  // 翻转 1 -> 0
-            i++;
-        }
-        if (i < n) {
-            bits[i] = true;   // 翻转 0 -> 1
+    // 动态表：n 次插入的总基本操作数 ≤ 3n（ops 统计每次插入 + 每次复制）
+    static class DynTable {
+        int[] table; int num = 0, size = 0; long ops = 0;
+        void insert(int x) {
+            if (size == 0) { table = new int[1]; size = 1; }
+            else if (num == size) {
+                int[] nt = new int[2 * size];
+                for (int i = 0; i < num; i++) { nt[i] = table[i]; ops++; }   // 复制
+                table = nt; size *= 2;
+            }
+            table[num++] = x; ops++;                                         // 插入
         }
     }
-
-    public boolean[] getBits() {
-        return bits.clone();
-    }
-}
-```
-
-### 7.3 摊还分析主程序
-
-```java
-/**
- * 摊还分析演示程序
- */
-public class AmortizedAnalysisDemo {
-
     public static void main(String[] args) {
-        // 1. 动态数组测试
-        System.out.println("=== 动态数组摊还分析 ===");
-        DynamicArray<Integer> arr = new DynamicArray<>();
-        long startTime = System.currentTimeMillis();
-        for (int i = 0; i < 1000000; i++) {
-            arr.add(i);
+        Random r = new Random(2024);
+        for (int t = 0; t < 50; t++) {                                      // 计数器：flips < 2n
+            int k = 4 + r.nextInt(20), n = r.nextInt(10000);
+            if (counterFlips(n, new int[k]) >= 2 * n) throw new RuntimeException("flips ≥ 2n");
         }
-        long endTime = System.currentTimeMillis();
-        System.out.println("插入 100 万元素耗时: " + (endTime - startTime) + "ms");
-        System.out.println("最终容量: " + arr.capacity());
-
-        // 2. 二进制计数器测试
-        System.out.println("\n=== 二进制计数器摊还分析 ===");
-        BinaryCounter counter = new BinaryCounter(32);
-        int totalFlips = 0;
-        for (int i = 0; i < 1000000; i++) {
-            int flips = countAndIncrement(counter);
-            totalFlips += flips;
-        }
-        System.out.println("总翻转次数: " + totalFlips);
-        System.out.println("平均每次递增翻转次数: " + (double) totalFlips / 1000000);
-    }
-
-    /**
-     * 递增并返回翻转次数
-     */
-    private static int countAndIncrement(BinaryCounter counter) {
-        boolean[] bits = counter.getBits();
-        int flips = 0;
-        int i = 0;
-        while (i < bits.length && bits[i]) {
-            bits[i] = false;
-            flips++;
-            i++;
-        }
-        if (i < bits.length) {
-            bits[i] = true;
-            flips++;
-        }
-        return flips;
+        DynTable dt = new DynTable(); int n = 1 << 16;                       // 动态表：ops ≤ 3n
+        for (int i = 0; i < n; i++) dt.insert(i);
+        System.out.println("n=" + n + " 总操作=" + dt.ops + " (2n=" + 2L*n + ", 3n=" + 3L*n + ")");
+        if (dt.ops > 3L * n) throw new RuntimeException("ops > 3n");
+        System.out.println("OK");
     }
 }
 ```
 
----
+实测：`n=65536 总操作=131071`（= 2n−1，紧贴聚合分析给出的 ≈2n，远低于 3n 上界）。
 
-## 八、总结
+### 6.2 双栈队列（习题 16.3-5 / LeetCode 232，Java）
 
-### 8.1 核心概念回顾
-
-```mermaid
-flowchart TD
-    A["摊还分析核心"] --> B["不是为了找出最坏情况"]
-    A --> C["而是分析整体平均性能"]
-    A --> D["关键：总代价 / 操作数"]
-
-    B --> E["单次操作可能很昂贵"]
-    C --> F["但频繁操作的代价很低"]
-    D --> G["摊还代价代表平均性能"
-
-    style A fill:#ffff99,stroke:#333
+```java
+class TwoStackQueue {                       // 入队压 in 栈；出队从 out 栈弹，空了就把 in 全倒过来
+    Deque<Integer> in = new ArrayDeque<>(), out = new ArrayDeque<>();
+    void enqueue(int x) { in.push(x); }
+    int dequeue() {
+        if (out.isEmpty()) while (!in.isEmpty()) out.push(in.pop());   // 摊还关键：每个元素最多被搬运一次
+        return out.pop();
+    }
+}
 ```
 
-### 8.2 何时使用摊还分析
+**为什么摊还 O(1)**：每个元素从入队到出队，至多经历 4 次栈操作（push in → pop in → push out → pop out）。n 次 enqueue/dequeue 的总栈操作 ≤ 4n，故每次摊还 O(1)。最坏某次 dequeue（out 空且 in 很大）要 O(n)，但「贵的一次之后是长期廉价」。
 
-```mermaid
-flowchart TD
-    A["适用摊还分析的情况"] --> B["存在"昂贵但稀有"的操作"]
-    A --> C["数据结构有"扩容"或"重构"机制"]
-    A --> D["需要证明整体复杂度优于最坏情况"]
+### 6.3 Python 版
 
-    B --> E["动态数组、栈、计数器等"]
-    C --> F["摊还分析能揭示真实性能"]
-    D --> G["如：O(1) 摊还而非 O(n) 最坏"
+```python
+def counter_flips(n, bits):                 # 总翻转 < 2n
+    total = 0
+    for _ in range(n):
+        i = 0
+        while i < len(bits) and bits[i] == 1:
+            bits[i] = 0; total += 1; i += 1
+        if i < len(bits):
+            bits[i] = 1; total += 1
+    return total
 
-    style A fill:#ffff99,stroke:#333
+class DynTable:                             # 总操作 ≤ 3n
+    def __init__(self): self.table=[]; self.num=0; self.size=0; self.ops=0
+    def insert(self, x):
+        if self.size == 0: self.table=[0]; self.size=1
+        elif self.num == self.size:
+            nt=[0]*(2*self.size)
+            for i in range(self.num): nt[i]=self.table[i]; self.ops+=1
+            self.table=nt; self.size*=2
+        self.table[self.num]=x; self.num+=1; self.ops+=1
+
+class TwoStackQueue:                        # 双栈队列，摊还 O(1)
+    def __init__(self): self.in_=[]; self.out=[]
+    def enqueue(self, x): self.in_.append(x)
+    def dequeue(self):
+        if not self.out:
+            while self.in_: self.out.append(self.in_.pop())
+        return self.out.pop()
 ```
 
-### 8.3 三种方法的选择
-
-| 场景 | 推荐方法 |
-|-----|---------|
-| 简单分析，总代价易计算 | 聚合分析 |
-| 需要直观解释 | 记账方法 |
-| 需要数学证明 | 势能方法 |
+Java 与 Python 两版均通过随机对拍：计数器 50 轮 flips < 2n、动态表 20 轮 ops ≤ 3n、双栈队列 100 轮 FIFO 正确且总操作 ≤ 4m。
 
 ---
 
-**摊还分析是一种强大的分析工具**，它帮助我们理解数据结构的真实性能，而不仅仅是最坏情况。通过将昂贵操作的成本分摊到大量廉价操作上，我们可以证明许多看似低效的数据结构实际上具有优秀的整体性能。
+## 七、复杂度速查 + 易混点
 
-下一章：第十七章——基本图算法（Graph Algorithms）
+### 7.1 速查
+
+| 结构 / 操作 | 单次最坏 | 摊还 | 方法 | 出处 |
+|------------|---------|------|------|------|
+| 栈 PUSH/POP/MULTIPOP | O(n) | O(1) | 任一 | §16.1–16.3 |
+| 二进制计数器 INCREMENT | O(k) | O(1) | 任一 | §16.1–16.3 |
+| 动态表 INSERT（扩容） | O(n) | O(1)（≤3） | 任一 | §16.4 |
+| 动态表 DELETE（缩容） | O(n) | O(1) | 势能 | §16.4 |
+| 双栈队列 enqueue/dequeue | O(n) | O(1) | 记账/势能 | 习题 16.3-5 |
+| 不相交集合（Ch 19） | O(lg n) | **α(n)** | 势能 | Ch 19 |
+
+### 7.2 易混点
+
+- **摊还 ≠ 平均情况**：摊还**不涉及概率**，对**任意**序列成立；平均情况要假设输入分布。这是最常考的概念题。
+- **三种方法对同一问题给出的摊还上界一致**，区别只在证法；势能法最通用、能证记账法不好证的（如动态表带删除）。
+- **势能法要求 Φ(D₀)=0 且 Φ(Dᵢ)≥0 恒成立**——否则 Σĉᵢ ≥ Σcᵢ 不成立，上界失效。验证 Φ≥0 是必经一步。
+- **记账法的存款必须落在具体对象上**且总数 ≥ 0；势能法的「存款」是整体函数值，不绑对象。两者等价但势能法更灵活。
+- **缩容阈值不能卡在 1/2**（与扩容对称），否则 `插删删插…` 序列在阈值处反复横跳，摊还退化到 Θ(n)。必须放宽到 **1/4**，留出缓冲。
+- **摊还分析不改变代码**——那些「收费」「存款」只是分析工具，绝不该写进程序（如别真给节点加个 `credit` 字段）。
+- **二进制计数器加 DECREMENT 就不再是 O(1) 摊还**（习题 16.1-2）：可在高位反复增减，每次 O(k)，总 Θ(nk)。对称操作未必保持摊还界。
+
+---
+
+## 八、LeetCode 题单 + 习题 + 思考题
+
+### 8.1 LeetCode 题单
+
+| 题目 | 难度 | 考点 | 用本章什么 |
+|------|------|------|-----------|
+| [232. 用栈实现队列](https://leetcode.cn/problems/implement-queue-using-stacks/) | 简 | 双栈队列 | 习题 16.3-5，摊还 O(1) |
+| [225. 用队列实现栈](https://leetcode.cn/problems/implement-stack-using-queues/) | 简 | 对偶问题 | 摊还分析 |
+| [341. 扁平化嵌套列表迭代器](https://leetcode.cn/problems/flatten-nested-list-iterator/) | 中 | 摊还 next() | 偶尔展开、均摊 O(1) |
+| [284. 顶端迭代器](https://leetcode.cn/problems/peeking-iterator/) | 中 | 摊还 peek | 缓存下一次 |
+| [251. 展开二维向量](https://leetcode.cn/problems/flatten-2d-vector/) | 中 | 摊还迭代 | 惰性推进内层指针 |
+
+> 摊还分析在 LC 上主要表现为「**迭代器/队列的惰性搬运**」：把昂贵的整理工作推迟、分摊到后续廉价调用。232 是教科书级；341/284/251 是同一思想的变体。动态数组扩容则是 `ArrayList`/`vector`/`list` 的内建行为，不会单独命题。
+
+### 8.2 习题快问快答（第四版编号）
+
+- **16.1-1**　加 `MULTIPUSH(S, k)`（一次压 k 个）后摊还界**仍 O(1)**：每个元素至多被压一次、弹一次，总量守恒。
+- **16.1-2**　计数器加 `DECREMENT` 后 n 次操作可达 Θ(nk)：在第 k−1 位附近反复增减，每次翻转 Θ(k) 个高位。
+- **16.1-3**　第 i 次操作代价为 i（i 是 2 的幂）否则 1。总代价 = n + Σⱼ 2ʲ ≤ n + 2n = 3n → 摊还 O(1)。
+- **16.2-3**　支持 `RESET`（全清 0）的计数器：维护一个指向**最高位 1** 的指针，RESET 只清到它即可。每个位至多被置 1 一次、清 0 一次 → 总 O(n)。
+- **16.3-3**　二叉小根堆取 Φ = Σ（节点深度）：INSERT 加一片深度 ≤ lg n 的叶子，ΔΦ ≤ lg n，摊还 O(lg n)；EXTRACT-MIN 删去深度 ⌊lg n⌋ 的末叶（释放势能）、sift-down 每次交换势能净变化 0，ΔΦ ≤ −lg n，摊还 **O(1)**。
+- **16.3-4**　栈从 s₀ 个开始、sₙ 个结束：Σcᵢ = Σĉᵢ − (Φₙ − Φ₀) ≤ 2n − sₙ + s₀。
+- **16.3-5**　双栈队列（见 §6.2）：每个元素至多搬运 4 次，摊还 O(1)。
+- **16.3-6**　支持 INSERT 与 DELETE-LARGER-HALF：用无序数组，INSERT O(1)；DELETE-LARGER-HALF 用 **SELECT（第 9 章）**找中位数再线性划分删除 ⌈|S|/2⌉ 个，O(|S|)。m 次操作总 O(m)（每次删除把常数比例的元素扫掉，势能可证）。
+
+### 8.3 思考题要点
+
+- **16-2 动态二分查找**：维护 k = ⌈lg(n+1)⌉ 个有序数组 A₀..Aₖ₋₁，Aᵢ 长度 2ⁱ，是否占用由 n 的二进制第 i 位决定。INSERT 像**二进制计数器进位**——A₀ 满就与 A₁ 合并、进位……每次合并代价等于合并后的数组长，摊还 O(lg n)（与计数器摊还 O(1) 同构，只是单位变成「数组长度」）。SEARCH 在每个数组二分，最坏 O(lg²n)。**这是「摊还分析 + 数据结构设计」的典范**。
+- **16-4 重构红黑树的代价**：RB-INSERT/DELETE 单次最坏可有 Θ(lg n) 次**改色**，但用势能 Φ =（红节点数）可证 m 次操作的结构修改总次数 O(m)——即**摊还 O(1) 次结构修改**（呼应第 13 章「常数次旋转」之外的另一面）。Case 1 改色让 Φ 减 1，正好付账。
+
+### 章末注记
+
+摊还分析由 **Tarjan** 系统化（见其 1985 年专著 *Amortized Computational Complexity*，与 Sleator 合作提出的 **splay 树**是摊还分析的旗舰应用——摊还 O(lg n) 每次操作）。聚合分析、记账法、势能法三件套是 CLRS 的标准组织；动态表的「翻倍扩容 / 四分之一缩容」是工程中 `ArrayList`/`vector`/`list` 的通用实现策略。

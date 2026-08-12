@@ -1,29 +1,69 @@
-# 第十九章：不相交集合的数据结构（Disjoint Sets）——深度版
+# 第 19 章：不相交集合（Disjoint Sets，并查集）——深度版
 
-## 一、问题描述
+## 一、开篇定位
 
-### 1.1 本章主题
+本章回答一个问题：**如何维护一族动态变化的「分组」，支持快速查询「两个元素是否同组」和「合并两组」？** 这就是不相交集合（disjoint sets），竞赛与工程界更熟悉的名字是**并查集**（union-find）。
 
-本章讨论**不相交集合**（Disjoint Sets）的数据结构维护问题。不相交集合是指一组没有公共元素的集合，这种数据结构也称为**并查集**（Union-Find）。
+应用遍地都是：无向图连通分量、Kruskal 最小生成树的环检测、图像连通域标记、编译器等价类分析、网络动态连通性。
 
-**核心操作**：
-- **FIND-SET(x)**：查找元素x所在集合的代表元素
-- **UNION(x, y)**：合并包含x和y的两个集合
+与前后章节的关系：
 
-**为什么重要**：
-- 理论意义：实现了近乎线性的时间复杂度 O(m α(n))
-- 实际应用：无向图连通分量、最小生成树（Kruskal算法）、图像处理
+- 分析工具来自**第 16 章摊还分析**（19.4 用的是势能法）；
+- **第 20 章**的 DFS 也能求连通分量，静态图上 $O(V+E)$ 更快——并查集的主场是**边动态加入、在线查询**的场景；
+- **第 21 章 Kruskal** 是并查集的头号客户：每考察一条边就是一次「查同集 + 合并」。
 
-### 1.2 应用场景：无向图连通分量
+做题定位：识别信号 = 「分组 / 连通 / 合并 + 查询是否同组」。模板题 547（省份数量）、684（冗余连接）；变体见第六节题单（带权并查集 399、逆向并查集 803）。
 
-**问题**：给定一个无向图 G = (V, E)，找出所有连通分量。
+**本章主线**：三个操作与连通分量应用（19.1）→ 链表实现及加权合并（19.2）→ 并查集森林：按秩合并 + 路径压缩（19.3）→ 反阿克曼函数与 $O(m\,\alpha(n))$ 的含义（19.4）→ Java + Python 双实现 → 速查/易混 → 题单与习题。
 
-**算法流程**：
-1. 初始化：每个顶点自成一个集合
-2. 遍历所有边 (u, v)，如果 u 和 v 不在同一个集合，则合并它们
-3. 遍历结束后，同一集合的顶点属于同一连通分量
+---
 
-```java
+## 二、核心思想：每个集合一棵树，树根是「代表」
+
+大白话：把每个集合看成一个「帮派」，帮里每人只认自己的直接上级，帮主（树根）就是集合的**代表**（representative）。
+
+- **MAKE-SET(x)**：x 自立门户，自成一帮；
+- **FIND-SET(x)**：x 顺上级一路问到帮主——返回帮主；
+- **UNION(x, y)**：两个帮主见面，一个认另一个当总帮主。
+
+判断 x、y 是否同组 = 看帮主是不是同一个人。两个启发式让这套结构快到近乎常数：
+
+- **按秩合并**（union by rank）：合并时让「矮」树的根挂到「高」树的根下，树长不高；
+- **路径压缩**（path compression）：每做一次 FIND-SET，顺手把沿途所有人直接挂到帮主名下，下次再问一步到位。
+
+```mermaid
+graph TD
+    subgraph S1["集合 {b, c, e, h}，代表 c"]
+        c(("c")) --> b(("b"))
+        c --> e(("e"))
+        e --> h(("h"))
+    end
+    subgraph S2["集合 {d, f, g}，代表 f"]
+        f(("f")) --> d(("d"))
+        f --> g(("g"))
+    end
+
+    classDef rep fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    classDef normal fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    class c,f rep
+    class b,d,e,g,h normal
+    style S1 fill:#E3F2FD,stroke:#1976D2,color:#1f1f1f
+    style S2 fill:#FFF8E1,stroke:#F9A825,color:#1f1f1f
+```
+
+**图 A**（对应 Figure 19.4a）：并查集森林。每个节点只存指向父节点的指针（图示为树形方向，实际指针由孩子指向父），根的父节点是自己。FIND-SET(h) 沿 h → e → c 上溯，返回 c。
+
+**复杂度参数约定**（全章通用）：$n$ = MAKE-SET 次数，$m$ = 三种操作的总次数（$m \ge n$）。每次 UNION 使集合数减 1 ⇒ 至多 $n-1$ 次 UNION。
+
+---
+
+## 三、应用与两种实现
+
+### 3.1 应用：无向图的连通分量（19.1）
+
+**问题**：给定无向图，求连通分量；之后在线回答「u、v 是否连通」。
+
+```
 CONNECTED-COMPONENTS(G)
 1  for each vertex v ∈ G.V
 2      MAKE-SET(v)
@@ -37,819 +77,476 @@ SAME-COMPONENT(u, v)
 3  else return FALSE
 ```
 
-### 1.3 复杂度参数定义
+```mermaid
+graph LR
+    a(("a")) --- b(("b"))
+    a --- c(("c"))
+    b --- c
+    b --- d(("d"))
+    e(("e")) --- f(("f"))
+    f --- g(("g"))
+    h(("h")) --- i(("i"))
+    j(("j"))
 
-| 参数 | 含义 |
-|-----|------|
-| n | MAKE-SET 操作的数量 |
-| m | 总操作数（MAKE-SET + UNION + FIND-SET） |
-| 约束 | m ≥ n（因为总操作数包含所有MAKE-SET） |
+    classDef normal fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    class a,b,c,d,e,f,g,h,i,j normal
+```
 
-**关键观察**：
-- 最多有 n-1 次 UNION 操作（每次减少一个集合）
-- 第一次 n 次操作总是 MAKE-SET
+**图 B**（对应 Figure 19.1a）：10 个顶点、7 条边。按 (b,d) → (e,f) → (a,c) → (h,i) → (a,b) → (f,g) → (b,c) 的顺序处理边，集合族演变如下（已用代码实跑核对）：
 
----
+| 处理的边 | 处理后的集合族 |
+|---------|---------------|
+| （初始） | {a} {b} {c} {d} {e} {f} {g} {h} {i} {j} |
+| (b, d) | {a} {b,d} {c} {e} {f} {g} {h} {i} {j} |
+| (e, f) | {a} {b,d} {c} {e,f} {g} {h} {i} {j} |
+| (a, c) | {a,c} {b,d} {e,f} {g} {h} {i} {j} |
+| (h, i) | {a,c} {b,d} {e,f} {g} {h,i} {j} |
+| (a, b) | {a,b,c,d} {e,f} {g} {h,i} {j} |
+| (f, g) | {a,b,c,d} {e,f,g} {h,i} {j} |
+| (b, c) | 两端已同集，跳过 UNION |
 
-## 二、链表实现（简单版本）
+最终 4 个连通分量：{a,b,c,d}、{e,f,g}、{h,i}、{j}。
 
-### 2.1 数据结构设计
+**什么时候不用并查集**：边集静态不变时，第 20 章的 DFS 一次 $O(V+E)$ 即可（习题 20.3-12）；并查集赢在**边动态加入、随加随问**（每加一条边只需一次 UNION）。
 
-**每个集合用链表表示**：
-- 集合对象：包含 head（指向第一个节点）和 tail（指向最后一个节点）
-- 节点对象：包含集合元素、指向下一个节点的指针、指向集合对象的指针
-- 代表元素：链表的第一个节点
+LeetCode 标注：547（省份数量）、200（岛屿数量）就是本节的模板题。
+
+### 3.2 链表实现：FIND O(1)，UNION 是痛点（19.2）
+
+**设计**：每个集合一条链表；集合对象存 head / tail 指针；每个节点除 next 外还存一个**回指集合对象的指针**；代表 = 首节点。
 
 ```mermaid
 graph LR
-    subgraph "集合S1"
-        S1["集合对象<br/>head → d<br/>tail → g"]
-        d["节点d<br/>next → f<br/>set → S1"] --> f["节点f<br/>next → g<br/>set → S1"]
-        f --> g["节点g<br/>next → null<br/>set → S1"]
+    subgraph SG1["S1 = {f, g, d}，代表 f"]
+        n1["f"] --> n2["g"] --> n3["d"]
+    end
+    subgraph SG2["S2 = {c, h, e, b}，代表 c"]
+        n4["c"] --> n5["h"] --> n6["e"] --> n7["b"]
     end
 
-    subgraph "集合S2"
-        S2["集合对象<br/>head → b<br/>tail → h"]
-        b["节点b<br/>next → c<br/>set → S2"] --> c["节点c<br/>next → e<br/>set → S2"]
-        c --> e["节点e<br/>next → h<br/>set → S2"]
-    end
-
-    style S1 fill:#9f9,stroke:#333
-    style S2 fill:#9f9,stroke:#333
+    classDef rep fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    classDef normal fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    class n1,n4 rep
+    class n2,n3,n5,n6,n7 normal
+    style SG1 fill:#E3F2FD,stroke:#1976D2,color:#1f1f1f
+    style SG2 fill:#FFF8E1,stroke:#F9A825,color:#1f1f1f
 ```
 
-**代表元素**：
-- S1 的代表元素是 d
-- S2 的代表元素是 b
+**图 C**（对应 Figure 19.2a）：每个节点还有一个回指 S1 / S2 集合对象的指针（图中省略）。MAKE-SET 建单节点链表 $O(1)$；FIND-SET(x) 沿回指指针拿到集合对象、返回 head 首元素，也是 $O(1)$——如 FIND-SET(g) 返回 f。
 
-### 2.2 基本操作实现
-
-**MAKE-SET(x)**：O(1)
-```java
-// 创建一个只包含x的新链表
-x.set = new SetObject()
-x.set.head = x
-x.set.tail = x
-x.next = null
-```
-
-**FIND-SET(x)**：O(1)
-```java
-// 通过x指向集合对象的指针，直接返回head指向的元素
-return x.set.head
-```
-
-### 2.3 UNION操作与性能问题
-
-**简单实现**：将一个链表接到另一个链表末尾
+**UNION(x, y)**：约定把 **y 的链表**接到 **x 的链表**尾（tail 指针让拼接本身 $O(1)$），但必须把 y 链上**每个节点**的回指指针改到 x 的集合对象 ⇒ 代价 $O$（y 的链表长度）。
 
 ```mermaid
 graph LR
-    subgraph "UNION(g, e)之前"
-        S1["S1: d → f → g"] --> S2["S2: b → c → e → h"]
+    subgraph BEFORE["UNION(g, e) 前"]
+        a1["f"] --> a2["g"] --> a3["d"]
+        b1["c"] --> b2["h"] --> b3["e"] --> b4["b"]
+    end
+    subgraph AFTER["UNION(g, e) 后"]
+        c1["f"] --> c2["g"] --> c3["d"] --> c4["c"] --> c5["h"] --> c6["e"] --> c7["b"]
     end
 
-    subgraph "UNION(g, e)之后"
-        S1_new["S1: d → f → g → b → c → e → h"]
-    end
+    classDef rep fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    classDef touched fill:#CE93D8,stroke:#7B1FA2,color:#1f1f1f
+    classDef normal fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    class a1,c1 rep
+    class b1,b2,b3,b4,c4,c5,c6,c7 touched
+    class a2,a3,c2,c3 normal
+    style BEFORE fill:#E3F2FD,stroke:#1976D2,color:#1f1f1f
+    style AFTER fill:#E8F5E9,stroke:#388E3C,color:#1f1f1f
+    linkStyle 7 stroke:#7B1FA2,stroke-width:3px
 ```
 
-**性能瓶颈**：
-- 必须更新被合并链表中**所有节点**指向集合对象的指针
-- 时间复杂度：O(被合并链表的长度)
+**图 D**（对应 Figure 19.2b）：UNION(g, e) 把 e 所在的 S2 整条接到 S1 尾（紫粗边为拼接点），紫色节点（c、h、e、b 共 4 个）的回指指针全部要更新，S2 对象销毁，新集合代表为 f。
 
-**反例**：Θ(n²) 的操作序列
-```
-MAKE-SET(x1), MAKE-SET(x2), ..., MAKE-SET(xn)  // Θ(n)
-UNION(x1, x2), UNION(x1, x3), ..., UNION(x1, xn)  // Θ(n²)
-```
+**最坏序列**（Figure 19.3）：从 n 个单元素集合出发，按上述约定依次执行 UNION(x2, x1)、UNION(x3, x2)、…——每次都把已有长链接到单元素后面：
 
-| 操作 | 更新的节点数 |
-|-----|------------|
-| UNION(x1, x2) | 1 |
-| UNION(x1, x3) | 2 |
-| UNION(x1, x4) | 3 |
-| ... | ... |
-| UNION(x1, xn) | n-1 |
-| **总计** | **1 + 2 + ... + (n-1) = Θ(n²)** |
+| 操作 | 更新的对象数 |
+|------|-------------|
+| MAKE-SET(x1) … MAKE-SET(xn) | 各 1，共 n |
+| UNION(x2, x1) | 1 |
+| UNION(x3, x2) | 2 |
+| UNION(x4, x3) | 3 |
+| ⋮ | ⋮ |
+| UNION(xn, xn−1) | n−1 |
+| **合计** | $\Theta(n^2)$ |
 
-### 2.4 加权合并启发式
+$m = 2n-1$ 次操作总耗时 $\Theta(n^2)$，**平均每次 $\Theta(n)$**——无法接受。
 
-**核心思想**：总是将**较短的链表**合并到**较长的链表**
+**加权合并启发式**（weighted-union）：集合对象额外记录长度，UNION 总把**短**链表接到**长**链表。单次 UNION 仍可能 $\Omega(n)$，但摊还下来很便宜：
 
-```mermaid
-flowchart TD
-    A["UNION(x, y)"] --> B{"len(x.list) > len(y.list)?"}
-    B -->|是| C["将y的链表接到x后面<br/>更新y链表所有节点的set指针"]
-    B -->|否| D["将x的链表接到y后面<br/>更新x链表所有节点的set指针"]
+> **结论**：加权合并下 m 次操作总时间 $O(m + n \lg n)$。
+> 直觉：x 的回指指针每被更新一次，x 必在较短的一边 ⇒ 新集合至少是原集合两倍大 ⇒ 每个对象最多更新 $\lceil \lg n \rceil$ 次，全体 UNION 的总更新量 $O(n \lg n)$。
 
-    C --> E["返回新链表"]
-    D --> E
+### 3.3 并查集森林：按秩合并 + 路径压缩（19.3）
 
-    style A fill:#ff9,stroke:#333
-    style B fill:#9ff,stroke:#333
-```
+链表表示 FIND 快、UNION 贵；森林表示反过来：UNION 只是根挂根 $O(1)$，FIND 要爬树。两个启发式负责把树压矮。
 
-**定理 19.1**：使用加权合并启发式，m 次操作的总时间为 O(m + n lg n)
-
-**证明思路**：
-- 每个节点的指针最多被更新 ⌈lg n⌉ 次
-- 因为每次更新时，节点所在集合大小至少翻倍
-- n 个节点 × ⌈lg n⌉ 次 = O(n lg n)
-
----
-
-## 三、并查集森林（优化版本）
-
-### 3.1 数据结构设计
-
-**用树表示集合**：
-- 每个节点包含一个元素
-- 每棵树代表一个集合
-- 树根是代表元素
+**按秩合并**：每个节点维护 **rank = 高度的上界**；合并时**秩小的根挂到秩大的根下**；秩相等则任选一个当父、其 rank +1。
 
 ```mermaid
 graph TD
-    subgraph "集合{b, c, e, h}"
-        c["c<br/>representative"]
-        c --> b
-        c --> e
-        e --> h
+    subgraph BEFORE["UNION(e, g) 前"]
+        a1["c<br/>rank 2"] --> a2["b"]
+        a1 --> a3["e"]
+        a3 --> a4["h"]
+        b1["f<br/>rank 1"] --> b2["d"]
+        b1 --> b3["g"]
+    end
+    subgraph AFTER["UNION(e, g) 后"]
+        c1["c<br/>rank 2"] --> c2["b"]
+        c1 --> c3["e"]
+        c3 --> c4["h"]
+        c1 --> c5["f<br/>rank 1"]
+        c5 --> c6["d"]
+        c5 --> c7["g"]
     end
 
-    subgraph "集合{d, f, g}"
-        f["f<br/>representative"]
-        f --> d
-        f --> g
-    end
-
-    style c fill:#9f9,stroke:#333
-    style f fill:#9f9,stroke:#333
+    classDef rep fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    classDef normal fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    class a1,b1,c1 rep
+    class a2,a3,a4,b2,b3,c2,c3,c4,c5,c6,c7 normal
+    style BEFORE fill:#E3F2FD,stroke:#1976D2,color:#1f1f1f
+    style AFTER fill:#E8F5E9,stroke:#388E3C,color:#1f1f1f
+    linkStyle 8 stroke:#7B1FA2,stroke-width:3px
 ```
 
-**节点属性**：
-- x.parent：指向父节点
-- x.rank：高度的近似值（按秩合并使用）
+**图 E**（对应 Figure 19.4）：UNION(e, g) 先 FIND-SET 找到两棵树的根 c（rank 2）与 f（rank 1），秩小的 f 挂到 c 下（紫粗边），rank 均不变。只有两秩相等时新根的 rank 才 +1。
 
-### 3.2 核心启发式
-
-**启发式1：按秩合并（Union by Rank）**
-
-```mermaid
-flowchart TD
-    A["UNION(x, y)"] --> B["rx = FIND-SET(x)的秩"]
-    B --> C["ry = FIND-SET(y)的秩"]
-    C --> D{"rx > ry?"}
-    D -->|是| E["ry的根指向rx的根"]
-    D -->|否| F{"rx < ry?"}
-    F -->|是| G["rx的根指向ry的根"]
-    F -->|否| H["rx的根指向ry的根<br/>ry的秩加1"]
-
-    style A fill:#ff9,stroke:#333
-    style D fill:#9ff,stroke:#333
-    style F fill:#9ff,stroke:#333
-```
-
-**启发式2：路径压缩（Path Compression）**
-
-```mermaid
-graph LR
-    subgraph "FIND-SET(a)之前"
-        A["a"] --> B["b"]
-        B --> C["c"]
-        C --> D["c是根"]
-    end
-```
-
-```mermaid
-graph LR
-    subgraph "FIND-SET(a)之后"
-        A2["a"] --> D2["c是根"]
-        B2["b"] --> D2
-    end
-
-    style A2 fill:#9f9,stroke:#333
-    style D2 fill:#9f9,stroke:#333
-```
-
-**关键观察**：
-- 路径压缩不改变秩
-- 按秩合并保证树不会太高
-
-### 3.3 Java实现
-
-```java
-public class DisjointSet {
-    private static class Node {
-        int data;
-        Node parent;
-        int rank;
-
-        Node(int data) {
-            this.data = data;
-            this.parent = this;
-            this.rank = 0;
-        }
-    }
-
-    private Map<Integer, Node> nodes = new HashMap<>();
-
-    // 创建只包含x的集合
-    public void makeSet(int x) {
-        if (!nodes.containsKey(x)) {
-            nodes.put(x, new Node(x));
-        }
-    }
-
-    // 查找x所在集合的代表（路径压缩）
-    public int findSet(int x) {
-        Node node = nodes.get(x);
-        if (node.parent != node) {
-            // 路径压缩：让节点直接指向根
-            node.parent = findSet(node.parent);
-        }
-        return node.parent.data;
-    }
-
-    // 按秩合并两个集合
-    public void union(int x, int y) {
-        Node rx = findSetNode(x);
-        Node ry = findSetNode(y);
-
-        if (rx == ry) return; // 已经在同一集合
-
-        // 按秩合并：小秩挂到大秩
-        if (rx.rank < ry.rank) {
-            rx.parent = ry;
-        } else if (rx.rank > ry.rank) {
-            ry.parent = rx;
-        } else {
-            ry.parent = rx;
-            rx.rank++; // 秩相同时任选一个，秩加1
-        }
-    }
-
-    private Node findSetNode(int x) {
-        Node node = nodes.get(x);
-        if (node.parent != node) {
-            node.parent = findSetNode(node.parent);
-        }
-        return node.parent;
-    }
-
-    // 判断x和y是否在同一集合
-    public boolean sameComponent(int x, int y) {
-        return findSet(x) == findSet(y);
-    }
-}
-```
-
-### 3.4 操作分析
-
-| 操作 | 时间复杂度 |
-|-----|-----------|
-| MAKE-SET | O(1) |
-| FIND-SET（无启发式） | O(树高) |
-| UNION（无启发式） | O(树高) |
-| FIND-SET（仅路径压缩） | O(log n) |
-| UNION（仅按秩合并） | O(log n) |
-| **两者结合** | **O(α(n))** |
-
----
-
-## 四、反阿克曼函数 α(n)
-
-### 4.1 阿克曼函数定义
-
-**阿克曼函数** Ackermann 函数是**增长极快**的函数：
-
-```
-A(0, j) = j + 1
-A(i, 0) = A(i-1, 1)  (i ≥ 1)
-A(i, j) = A(i-1, A(i, j-1))  (i, j ≥ 1)
-```
-
-### 4.2 函数增长有多快
-
-| 函数值 | 计算结果 | 含义 |
-|-------|---------|------|
-| A(0, 1) | 2 | 很小 |
-| A(1, 1) | 3 | 很小 |
-| A(2, 1) | 5 | 很小 |
-| A(3, 1) | 2047 | 十亿级别 |
-| A(4, 1) | 约 10^(80次方) | **超过可观测宇宙原子数** |
-
-```mermaid
-flowchart TD
-    A["A0,1 = 2"] --> B["A1,1 = 3"]
-    B --> C["A2,1 = 5"]
-    C --> D["A3,1 = 2047"]
-    D --> E["A4,1 ≈ 10的80次方"]
-
-    style A fill:#9f9,stroke:#333
-    style D fill:#ff9,stroke:#333
-    style E fill:#f99,stroke:#333,stroke-width:4px
-```
-
-### 4.3 反阿克曼函数
-
-**定义**：α(n) = 最小的 k，使得 A(k, 1) ≥ n
-
-```mermaid
-flowchart TD
-    A["αn = mink Ak1 ≥ n"]
-
-    subgraph "αn的取值"
-        A --> B["n ≤ 2 → αn = 0"]
-        B --> C["n ≤ 3 → αn = 1"]
-        C --> D["n ≤ 2047 → αn = 2"]
-        D --> E["n ≤ A4,1 → αn ≤ 3"]
-        E --> F["n > A4,1 → αn = 4"]
-    end
-
-    style A fill:#ff9,stroke:#333
-```
-
-**实际意义**：
-- 对于任何实际问题，α(n) ≤ 4
-- O(m α(n)) **几乎等于 O(m)**，是实际意义上的线性时间
-
-### 4.4 复杂度对比
-
-| 数据结构 | 时间复杂度 | 实际效果 |
-|---------|-----------|---------|
-| 加权合并链表 | O(m + n lg n) | 略好于线性 |
-| 仅按秩合并 | O(m lg n) | 对数因子 |
-| 仅路径压缩 | O(m log* n) | 略好于对数 |
-| **按秩 + 路径压缩** | **O(m α(n))** | **实际线性** |
-
-**α(n)与其他函数增长对比**：
-
-| n | log n | log log n | α(n) |
-|---|-------|-----------|------|
-| 10^6 | 20 | 3 | ≤ 3 |
-| 10^9 | 30 | 4 | ≤ 3 |
-| 10^80 | 266 | 6 | ≤ 4 |
-
----
-
-## 五、具体例子演示
-
-### 5.1 连通分量计算示例
-
-**图结构**：
-```
-顶点: {a, b, c, d, e, f, g, h, i, j}
-边: (d,i), (f,k), (g,i), (b,g), (a,h), (i,j), (d,k), (b,j), (d,f), (g,j), (a,e)
-```
-
-**初始状态**：每个顶点自成一个集合
+**路径压缩**：FIND-SET 是**两趟**过程——递归上行找根，回程时把沿途每个节点直接挂到根下。不改变任何 rank。
 
 ```mermaid
 graph TD
-    a1["{a}"] --> b1["{b}"] --> c1["{c}"] --> d1["{d}"]
-    d1 --> e1["{e}"] --> f1["{f}"] --> g1["{g}"] --> h1["{h}"]
-    g1 --> i1["{i}"] --> j1["{j}"]
-
-    style a1 fill:#ff9,stroke:#333
-    style b1 fill:#ff9,stroke:#333
-    style c1 fill:#ff9,stroke:#333
-    style d1 fill:#ff9,stroke:#333
-    style e1 fill:#ff9,stroke:#333
-    style f1 fill:#ff9,stroke:#333
-    style g1 fill:#ff9,stroke:#333
-    style h1 fill:#ff9,stroke:#333
-    style i1 fill:#ff9,stroke:#333
-    style j1 fill:#ff9,stroke:#333
-```
-
-**处理过程**：
-
-| 边 | 操作 | 集合变化 |
-|---|------|---------|
-| (d, i) | UNION(d, i) | {d, i}, {a}, {b}, {c}, {e}, {f}, {g}, {h}, {j} |
-| (f, k) | UNION(f, k) | {d, i}, {f, k}, {a}, {b}, {c}, {e}, {g}, {h}, {j} |
-| (g, i) | UNION(g, i) | {d, g, i}, {f, k}, {a}, {b}, {c}, {e}, {h}, {j} |
-| (b, g) | UNION(b, g) | {b, d, g, i}, {f, k}, {a}, {c}, {e}, {h}, {j} |
-| ... | ... | ... |
-
-**最终结果**：
-- 连通分量1: {a, b, d, e, g, i, j}
-- 连通分量2: {f, k}
-
-### 5.2 路径压缩演示
-
-**初始树结构**：
-```
-        g
-       / \
-      d   h
-     / \
-    b   f
-   /
-  a
-```
-
-**FIND-SET(a) 的执行过程**：
-
-```mermaid
-graph TD
-    subgraph "Step 1: 递归找到根"
-        A1["a.parent = d"] --> A2["d.parent = g"] --> A3["g.parent = g (根)"]
+    subgraph BEFORE["FIND-SET(a) 前"]
+        a1["g<br/>rank 3"] --> a2["d<br/>rank 2"]
+        a1 --> a3["h"]
+        a2 --> a4["b<br/>rank 1"]
+        a2 --> a5["f"]
+        a4 --> a6["a"]
+    end
+    subgraph AFTER["FIND-SET(a) 后"]
+        b1["g<br/>rank 3"] --> b2["d<br/>rank 2"]
+        b1 --> b3["h"]
+        b1 --> b4["b<br/>rank 1"]
+        b1 --> b5["a"]
+        b2 --> b6["f"]
     end
 
-    subgraph "Step 2: 路径压缩返回"
-        A3 --> A4["a.parent = g"]
-        A4 --> A5["d.parent = g"]
-    end
+    classDef rep fill:#A5D6A7,stroke:#388E3C,color:#1f1f1f
+    classDef path fill:#CE93D8,stroke:#7B1FA2,color:#1f1f1f
+    classDef normal fill:#90CAF9,stroke:#1976D2,color:#1f1f1f
+    class a1,b1 rep
+    class a2,a4,a6,b2,b4,b5 path
+    class a3,a5,b3,b6 normal
+    style BEFORE fill:#E3F2FD,stroke:#1976D2,color:#1f1f1f
+    style AFTER fill:#E8F5E9,stroke:#388E3C,color:#1f1f1f
+    linkStyle 0,2,4 stroke:#7B1FA2,stroke-width:3px
+    linkStyle 7,8 stroke:#388E3C,stroke-width:3px
 ```
 
-**压缩后的树结构**：
+**图 F**（对应 Figure 19.5）：FIND-SET(a) 的查找路径 a → b → d → g（紫）。压缩后 a、b、d 全部直指 g（绿粗边），树明显变矮——但 **rank 一个都不改**：d 的实际高度从 2 降到 1，rank 仍是 2。所以 rank 只是「曾经达到过」的高度上界，不是实时高度。
+
+**CLRS 伪代码**（第四版 p.530）：
+
 ```
-        g
-       /|\
-      d h a
-     /      \
-    b        f
+MAKE-SET(x)
+1  x.p = x
+2  x.rank = 0
+
+UNION(x, y)
+1  LINK(FIND-SET(x), FIND-SET(y))
+
+LINK(x, y)
+1  if x.rank > y.rank
+2      y.p = x
+3  else x.p = y
+4      if x.rank == y.rank
+5          y.rank = y.rank + 1
+
+FIND-SET(x)
+1  if x ≠ x.p                  // 不是根？
+2      x.p = FIND-SET(x.p)     // 根变成父节点（路径压缩）
+3  return x.p                  // 返回根
 ```
 
-**秩的变化**：注意秩不改变！
+**复杂度结论**（m 次操作，n 个元素）：
 
-| 节点 | 初始秩 | 最终秩 |
-|-----|-------|-------|
-| g | 2 | 2 |
-| d | 1 | 1 |
-| h | 0 | 0 |
-| a | 0 | 0 |
-| b | 0 | 0 |
-| f | 0 | 0 |
+| 启发式 | 总时间 | 一句话理由 |
+|--------|--------|-----------|
+| 仅按秩合并 | $O(m \lg n)$，且是紧的（习题 19.3-3） | rank ≤ $\lfloor \lg n \rfloor$：rank k 的根子树至少 $2^k$ 个节点（两棵 rank k−1 才并得出 rank k），故树高 $O(\lg n)$ |
+| 仅路径压缩 | $\Theta(n + f\,(1 + \log_{2+f/n}\, n))$，f = FIND 次数 | 约「摊还对数」级，但不如两者结合 |
+| **按秩 + 路径压缩** | $O(m\,\alpha(n))$ | 19.4 势能法证明；$\alpha$ 见下一节 |
+
+### 3.4 反阿克曼函数 α(n)（19.4）
+
+$O(m\,\alpha(n))$ 里的 $\alpha(n)$ 到底是什么？先看一个**增长极快**的函数族（CLRS 定义）：$A_0(j) = j + 1$；$k \ge 1$ 时，$A_k(j)$ = 把 $A_{k-1}$ 对 $j$ **迭代** $j+1$ 次。
+
+| k | $A_k(1)$ | 备注 |
+|---|----------|------|
+| 0 | 2 | |
+| 1 | 3 | 闭式 $A_1(j) = 2j + 1$ |
+| 2 | 7 | 闭式 $A_2(j) = 2^{j+1}(j+1) - 1$ |
+| 3 | 2047 | $A_3(1) = A_2(A_2(1)) = A_2(7)$ |
+| 4 | $\gg 10^{80}$ | 超过可观测宇宙的原子数 |
+
+**反阿克曼函数**：$\alpha(n) = \min\{k : A_k(1) \ge n\}$——「要到第几层才能盖住 n」。
+
+| n 的范围 | $\alpha(n)$ |
+|---------|-------------|
+| $0 \le n \le 2$ | 0 |
+| $n = 3$ | 1 |
+| $4 \le n \le 7$ | 2 |
+| $8 \le n \le 2047$ | 3 |
+| $2048 \le n \le A_4(1)$ | 4 |
+
+| n | $\lg n$ | $\lg \lg n$ | $\alpha(n)$ |
+|---|---------|-------------|-------------|
+| $10^6$ | ≈ 20 | ≈ 4.3 | 4 |
+| $10^9$ | ≈ 30 | ≈ 4.9 | 4 |
+| $10^{80}$ | ≈ 266 | ≈ 8.1 | 4 |
+
+**要点**：对任何写得下的 n，$\alpha(n) \le 4$。所以 $O(m\,\alpha(n))$ 在一切实际场合就是 $O(m)$（线性）；但数学上它**严格超线性**——这正是并查集的迷人之处。$O(m\,\alpha(n))$ 的证明用第 16 章的势能法做摊还分析（为每个节点设计随「父子秩差距」变化的势能），本笔记从略，记住结论与直觉即可：**按秩合并让树高不过 $\lg n$，路径压缩让重复查询越来越便宜，两者叠加，摊还每次操作 $O(\alpha(n))$。**
 
 ---
 
-## 六、复杂度分析
+## 四、代码实现（Java + Python）
 
-### 6.1 各方法对比表
+实战一律用 **0-indexed 数组**：`parent[i]` = i 的父节点（根指向自己），`rank[i]` = 秩；构造时 `parent[i] = i` 即完成 n 次 MAKE-SET，与 CLRS 对象指针伪代码一一对应。以下代码均已实际编译 / 运行，并与「显式集合」朴素实现随机对拍 200 轮 × 2000 操作验证一致。
 
-| 方法 | 时间复杂度 | 说明 |
-|-----|-----------|------|
-| 链表简单实现 | O(m + n²) | 最坏情况 |
-| 链表加权合并 | O(m + n lg n) | 启发式优化 |
-| 仅按秩合并 | O(m lg n) | 理论保证 |
-| 仅路径压缩 | O(m log* n) | 略好 |
-| **按秩 + 路径压缩** | **O(m α(n))** | **渐进最优** |
-
-### 6.2 为什么 α(n) 如此重要
-
-**数学上的严谨**：
-- 并查集操作的时间复杂度**不能低于 O(m)**
-- O(m α(n)) 是已知的**渐进最优解**
-- 任何更快的算法都是不可能的
-
-**实际意义**：
-- α(n) ≤ 4 对所有实际问题成立
-- O(m α(n)) = O(m) 对所有实际问题
-- 这是算法设计中**理论最优与实际最优完美统一**的例子
-
-```mermaid
-flowchart TD
-    A["m次操作"] --> B["实际需要多少时间?"]
-
-    B --> C{"使用并查集<br/>按秩合并+路径压缩"}
-
-    C --> D["Omαn"]
-    D --> E{"αn ≤ 4?"}
-    E -->|是| F["Om 实际线性时间"]
-    E -->|否| G["很少见，继续优化"]
-
-    F --> H["算法效率足够好!"]
-
-    style D fill:#9f9,stroke:#333
-    style F fill:#9f9,stroke:#333
-    style H fill:#ff9,stroke:#333
-```
-
----
-
-## 七、算法模板
-
-### 7.1 Java实现（完整版）
-
-```java
-import java.util.HashMap;
-import java.util.Map;
-
-/**
- * 并查集（不相交集合）数据结构
- * 支持按秩合并和路径压缩
- */
-public class DisjointSetForest {
-
-    private static class Node {
-        int data;
-        Node parent;
-        int rank;  // 近似高度
-
-        Node(int data) {
-            this.data = data;
-            this.parent = this;
-            this.rank = 0;
-        }
-    }
-
-    private final Map<Integer, Node> nodeMap;
-
-    public DisjointSetForest() {
-        this.nodeMap = new HashMap<>();
-    }
-
-    /**
-     * MAKE-SET: 创建只包含x的集合
-     */
-    public void makeSet(int x) {
-        if (!nodeMap.containsKey(x)) {
-            nodeMap.put(x, new Node(x));
-        }
-    }
-
-    /**
-     * FIND-SET: 查找x所在集合的代表（路径压缩版本）
-     */
-    public int findSet(int x) {
-        Node node = nodeMap.get(x);
-        if (node == null) {
-            throw new IllegalArgumentException("Element not found: " + x);
-        }
-        return findSetWithPathCompression(node).data;
-    }
-
-    private Node findSetWithPathCompression(Node node) {
-        if (node.parent != node) {
-            // 路径压缩：让节点直接指向根
-            node.parent = findSetWithPathCompression(node.parent);
-        }
-        return node.parent;
-    }
-
-    /**
-     * UNION: 合并两个集合（按秩合并版本）
-     */
-    public void union(int x, int y) {
-        Node rx = findSetWithPathCompression(nodeMap.get(x));
-        Node ry = findSetWithPathCompression(nodeMap.get(y));
-
-        if (rx == ry) {
-            // 已经在同一集合，无需合并
-            return;
-        }
-
-        // 按秩合并：小秩挂到大秩
-        if (rx.rank < ry.rank) {
-            rx.parent = ry;
-        } else if (rx.rank > ry.rank) {
-            ry.parent = rx;
-        } else {
-            // 秩相等时，任选一个作为父节点
-            ry.parent = rx;
-            rx.rank++;  // 高度增加
-        }
-    }
-
-    /**
-     * SAME-COMPONENT: 判断x和y是否在同一集合
-     */
-    public boolean sameComponent(int x, int y) {
-        return findSet(x) == findSet(y);
-    }
-
-    /**
-     * 获取集合大小（辅助功能）
-     */
-    public int sizeOf(int x) {
-        Node root = findSetWithPathCompression(nodeMap.get(x));
-        int count = 0;
-        for (Node node : nodeMap.values()) {
-            if (findSetWithPathCompression(node) == root) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    /**
-     * 获取集合数量
-     */
-    public int numberOfSets() {
-        int count = 0;
-        for (Node node : nodeMap.values()) {
-            if (node.parent == node) {
-                count++;
-            }
-        }
-        return count;
-    }
-}
-```
-
-### 7.2 Kruskal算法应用
+### 4.1 Java
 
 ```java
 import java.util.*;
 
 /**
- * Kruskal最小生成树算法使用并查集
+ * 并查集（不相交集合）：按秩合并 + 路径压缩
+ * 0-indexed 数组实现（LeetCode 实战惯例）
  */
-public class KruskalMST {
+public class DisjointSet {
+    private final int[] parent; // parent[i] = i 的父节点，根的父节点是自己
+    private final int[] rank;   // rank[i] = i 的秩（高度上界，仅根有意义）
+    private int count;          // 当前集合个数
 
-    private static class Edge implements Comparable<Edge> {
-        int u, v, weight;
-
-        Edge(int u, int v, int weight) {
-            this.u = u;
-            this.v = v;
-            this.weight = weight;
-        }
-
-        @Override
-        public int compareTo(Edge other) {
-            return Integer.compare(this.weight, other.weight);
-        }
+    /** n 个元素各自成集合（相当于 n 次 MAKE-SET） */
+    public DisjointSet(int n) {
+        parent = new int[n];
+        rank = new int[n];
+        for (int i = 0; i < n; i++) parent[i] = i;
+        count = n;
     }
 
-    /**
-     * Kruskal算法
-     * @param n 顶点数
-     * @param edges 边列表
-     * @return 最小生成树的总权重
-     */
-    public static int kruskal(int n, List<Edge> edges) {
-        // 1. 初始化：每个顶点自成一个集合
-        DisjointSetForest dsu = new DisjointSetForest();
-        for (int i = 0; i < n; i++) {
-            dsu.makeSet(i);
+    /** FIND-SET：返回 x 所在集合的代表（树根），顺带路径压缩 */
+    public int findSet(int x) {
+        if (parent[x] != x) {
+            parent[x] = findSet(parent[x]); // 回程时让 x 直接指向根
+        }
+        return parent[x];
+    }
+
+    /** UNION：合并 x、y 所在集合（按秩合并）；已同集则无事发生 */
+    public void union(int x, int y) {
+        int rx = findSet(x), ry = findSet(y);
+        if (rx == ry) return;
+        if (rank[rx] < rank[ry]) { // 让 rx 始终是秩较大的根
+            int t = rx; rx = ry; ry = t;
+        }
+        parent[ry] = rx;
+        if (rank[rx] == rank[ry]) rank[rx]++;
+        count--;
+    }
+
+    public boolean sameComponent(int x, int y) {
+        return findSet(x) == findSet(y);
+    }
+
+    public int count() {
+        return count;
+    }
+
+    public static void main(String[] args) {
+        // 演示 1：CLRS Figure 19.1 的连通分量（顶点 a..j = 0..9）
+        int[][] edges = {{1, 3}, {4, 5}, {0, 2}, {7, 8}, {0, 1}, {5, 6}, {1, 2}};
+        DisjointSet ds = new DisjointSet(10);
+        for (int[] e : edges) {
+            if (!ds.sameComponent(e[0], e[1])) ds.union(e[0], e[1]);
+        }
+        Map<Integer, List<Integer>> comp = new TreeMap<>();
+        for (int v = 0; v < 10; v++) {
+            comp.computeIfAbsent(ds.findSet(v), k -> new ArrayList<>()).add(v);
+        }
+        System.out.println("连通分量数 = " + ds.count());
+        for (List<Integer> members : comp.values()) {
+            StringBuilder sb = new StringBuilder("{");
+            for (int v : members) sb.append((char) ('a' + v)).append(' ');
+            System.out.println(sb.append("}"));
         }
 
-        // 2. 按权重排序
-        Collections.sort(edges);
-
-        // 3. 遍历边，尝试合并
-        int mstWeight = 0;
-        int edgesUsed = 0;
-
-        for (Edge edge : edges) {
-            // 如果u和v不在同一集合，添加这条边
-            if (!dsu.sameComponent(edge.u, edge.v)) {
-                dsu.union(edge.u, edge.v);
-                mstWeight += edge.weight;
-                edgesUsed++;
-
-                // n个顶点的MST有n-1条边
-                if (edgesUsed == n - 1) {
-                    break;
-                }
+        // 演示 2：Kruskal 最小生成树（第 21 章，并查集的头号应用）
+        int[][] weighted = {{0, 1, 10}, {0, 2, 6}, {0, 3, 5}, {1, 3, 15}, {2, 3, 4}};
+        Arrays.sort(weighted, Comparator.comparingInt(e -> e[2]));
+        DisjointSet ds2 = new DisjointSet(4);
+        int total = 0, used = 0;
+        for (int[] e : weighted) {
+            if (!ds2.sameComponent(e[0], e[1])) {
+                ds2.union(e[0], e[1]);
+                total += e[2];
+                if (++used == 3) break;
             }
         }
-
-        return mstWeight;
-    }
-
-    // 测试
-    public static void main(String[] args) {
-        List<Edge> edges = Arrays.asList(
-            new Edge(0, 1, 10),
-            new Edge(0, 2, 6),
-            new Edge(0, 3, 5),
-            new Edge(1, 3, 15),
-            new Edge(2, 3, 4)
-        );
-
-        int mst = kruskal(4, edges);
-        System.out.println("MST weight: " + mst);  // 输出: 15
+        System.out.println("MST weight = " + total);
     }
 }
 ```
 
----
+### 4.2 Python
 
-## 八、举一反三
+```python
+"""并查集（不相交集合）：按秩合并 + 路径压缩，0-indexed 数组实现"""
 
-### 8.1 同类LeetCode题目
 
-| 题目 | 链接 | 核心思想 |
-|-----|------|---------|
-| 547. 省份数量 | https://leetcode.cn/problems/number-of-provinces/ | 并查集求连通分量 |
-| 200. 岛屿数量 | https://leetcode.cn/problems/number-of-islands/ | 并查集/BFS/DFS |
-| 305. 岛屿数量II | https://leetcode.cn/problems/number-of-islands-ii/ | 动态添加岛屿 |
-| 684. 冗余连接 | https://leetcode.cn/problems/redundant-connection/ | 检测环 |
-| 685. 冗余连接II | https://leetcode.cn/problems/redundant-connection-ii/ | 有向树检测 |
-| 721. 账户合并 | https://leetcode.cn/problems/accounts-merge/ | 并查集应用 |
-| 737. 句子相似性II | https://leetcode.cn/problems/sentence-similarity-ii/ | 词汇相似性 |
-| 924. 尽量减少恶意软件的传播 | https://leetcode.cn/problems/minimize-malware-spread/ | 并查集+计数 |
+class DisjointSet:
+    def __init__(self, n: int):
+        self.parent = list(range(n))  # parent[i] = i 的父节点，根的父节点是自己
+        self.rank = [0] * n           # 秩：高度上界，仅根有意义
+        self.count = n                # 当前集合个数
 
-### 8.2 变形题目
+    def find_set(self, x: int) -> int:
+        """FIND-SET：返回 x 所在集合的代表（树根），顺带路径压缩"""
+        if self.parent[x] != x:
+            self.parent[x] = self.find_set(self.parent[x])  # 回程时让 x 直接指向根
+        return self.parent[x]
 
-**离线最小值问题（Problem 19-1）**：
-- 输入：n个INSERT和m个EXTRACT-MIN操作序列
-- 要求：确定每个EXTRACT-MIN返回的值
-- 解法：使用并查集倒序处理
+    def union(self, x: int, y: int) -> None:
+        """UNION：合并 x、y 所在集合（按秩合并）；已同集则无事发生"""
+        rx, ry = self.find_set(x), self.find_set(y)
+        if rx == ry:
+            return
+        if self.rank[rx] < self.rank[ry]:  # 让 rx 始终是秩较大的根
+            rx, ry = ry, rx
+        self.parent[ry] = rx
+        if self.rank[rx] == self.rank[ry]:
+            self.rank[rx] += 1
+        self.count -= 1
 
-**深度确定问题（Problem 19-2）**：
-- 扩展并查集支持FIND-DEPTH操作
-- 维护伪距离记录路径长度
+    def same_component(self, x: int, y: int) -> bool:
+        return self.find_set(x) == self.find_set(y)
 
-### 8.3 核心思想的迁移应用
 
-```mermaid
-flowchart TD
-    A["并查集核心思想"] --> B[集合表示为树]
-    A --> C[按秩合并控制高度]
-    A --> D["路径压缩摊还分析"]
-    A --> E["α(n)近似常数"]
+if __name__ == "__main__":
+    # 演示 1：CLRS Figure 19.1 的连通分量（顶点 a..j = 0..9）
+    edges = [(1, 3), (4, 5), (0, 2), (7, 8), (0, 1), (5, 6), (1, 2)]
+    ds = DisjointSet(10)
+    for u, v in edges:
+        if not ds.same_component(u, v):
+            ds.union(u, v)
+    comp = {}
+    for v in range(10):
+        comp.setdefault(ds.find_set(v), []).append(v)
+    print("连通分量数 =", ds.count)
+    for members in comp.values():
+        print("{" + " ".join(chr(ord('a') + v) for v in members) + " }")
 
-    B --> B1["Kruskal最小生成树"]
-    B --> B2["连通分量计算"]
-    B --> B3["图像区域标记"]
-
-    C --> C1["负载均衡"]
-    C --> C2["树形结构优化"]
-
-    D --> D1["摊还分析技巧"]
-    D --> D2["势能函数设计"]
-
-    E --> E1["实际应用近似线性"]
-    E --> E2["理论最优保证"]
-
-    style A fill:#ff9,stroke:#333,stroke-width:4px
+    # 演示 2：Kruskal 最小生成树（第 21 章，并查集的头号应用）
+    weighted = [(0, 1, 10), (0, 2, 6), (0, 3, 5), (1, 3, 15), (2, 3, 4)]
+    ds2 = DisjointSet(4)
+    total, used = 0, 0
+    for u, v, w in sorted(weighted, key=lambda e: e[2]):
+        if not ds2.same_component(u, v):
+            ds2.union(u, v)
+            total += w
+            used += 1
+            if used == 3:
+                break
+    print("MST weight =", total)
 ```
 
-### 8.4 实际应用场景
+运行输出（Java / Python 一致）：
 
-| 应用领域 | 使用场景 | 并查集的作用 |
-|---------|---------|-------------|
-| 编译器 | 等价类分析 | 变量等价性判断 |
-| 网络 | 网络连通性 | 动态网络连接状态 |
-| 游戏 | 区域连通 | 地图区域划分 |
-| 数据库 | 外键约束 | 循环依赖检测 |
-| 图像处理 | 连通域标记 | 前景/背景分割 |
+```
+连通分量数 = 4
+{a b c d }
+{e f g }
+{h i }
+{j }
+MST weight = 19
+```
 
 ---
 
-## 九、总结
+## 五、复杂度速查 + 易混点对比
 
-### 9.1 核心收获
+### 5.1 速查表
 
-1. **并查集三操作**：
-   - MAKE-SET：O(1)
-   - UNION：按秩合并
-   - FIND-SET：路径压缩
+| 实现 | MAKE-SET | FIND-SET | UNION | m 次操作总时间 |
+|------|----------|----------|-------|----------------|
+| 链表（朴素） | $O(1)$ | $O(1)$ | $O$（被接链表长） | 最坏 $\Theta(n^2)$（Figure 19.3） |
+| 链表（加权合并） | $O(1)$ | $O(1)$ | 摊还 $O(\lg n)$ | $O(m + n \lg n)$ |
+| 森林（仅按秩合并） | $O(1)$ | $O(\lg n)$ | $O(\lg n)$ | $O(m \lg n)$，紧 |
+| 森林（仅路径压缩） | $O(1)$ | 摊还约对数级 | — | $\Theta(n + f\,(1 + \log_{2+f/n}\, n))$ |
+| **森林（按秩 + 压缩）** | $O(1)$ | 摊还 $O(\alpha(n))$ | 摊还 $O(\alpha(n))$ | $O(m\,\alpha(n))$，渐近最优 |
 
-2. **两个启发式的结合**：
-   - 按秩合并：控制树高
-   - 路径压缩：摊还优化
-   - 共同作用：O(m α(n))
+空间均为 $O(n)$。
 
-3. **α(n)的含义**：
-   - 反阿克曼函数
-   - 增长极其缓慢
-   - 实际应用中小于等于4
+### 5.2 易混点对比
 
-### 9.2 为什么并查集如此优雅
+| 易混点 | 辨析 |
+|--------|------|
+| rank ≠ height | rank 是**高度上界**；路径压缩降低实际高度但不改 rank ⇒ 压缩后一般 rank > height（图 F 的 d） |
+| 按秩合并 vs 按大小合并 | 渐近效果相同；rank 更好分析（只增不减、与高度挂钩）。甚至随机把一个根挂到另一个根下，渐近也一样好（章末注记） |
+| 链表 vs 森林 | 链表 FIND $O(1)$ 但 UNION 贵；森林 UNION 是根挂根 $O(1)$、FIND 靠两启发式摊还到近 $O(1)$。实战只用森林 |
+| 路径压缩不改秩 | 秩只在「两等秩根相并」时 +1；FIND-SET 不动任何秩（图 F） |
+| $\alpha(n) \le 4$ ≠ 常数 | 一切实际 n 都 $\le 4$，实际即线性；但数学上 $\alpha$ 无界，$O(m\,\alpha(n))$ 严格超线性 |
+| 只用一种启发式 | 单按秩合并 $O(m \lg n)$、单路径压缩约对数级，都到不了 $\alpha(n)$——**必须结合** |
+| 静态图连通分量 | 边不变化时 DFS 一次 $O(V+E)$ 更快（第 20 章）；并查集赢在**动态加边 + 在线查询** |
+| UNION 的环检测用法 | 先 FIND-SET 判同集，同集则不加边——Kruskal（第 21 章）与 684 冗余连接就靠这一句 |
 
-```mermaid
-flowchart TD
-    A["并查集的优雅之处"] --> B["理论最优"]
-    A --> C["实现简洁"]
-    A --> D["实际高效"]
-    A --> E["应用广泛"]
+---
 
-    B --> B1["Omαn是渐进最优解"]
-    B --> B2["数学证明严密"]
+## 六、LeetCode 题单 + 习题快问快答
 
-    C --> C1["代码少于50行"]
-    C --> C2["三个核心操作"]
+### 6.1 LeetCode 题单
 
-    D --> D1["αn ≤ 4 对所有实际问题"]
-    D --> D2["几乎等同于线性时间"]
+| 题号 | 题目 | 难度 | 考点 |
+|-----|------|-----|------|
+| 547 | 省份数量 | 中 | **连通分量计数模板** |
+| 200 | 岛屿数量 | 中 | 网格上的连通分量（DFS/BFS 亦可，并查集要会） |
+| 684 | 冗余连接 | 中 | **环检测**：两端同集 ⇒ 当前边即答案 |
+| 721 | 账户合并 | 中 | 邮箱 → 账户下标映射后合并，再按根聚合 |
+| 1319 | 连通网络的操作次数 | 中 | 边数 ≥ n−1 时答案 = 分量数 − 1 |
+| 990 | 等式方程的可满足性 | 中 | 先并所有 ==，再查每个 != 是否同集 |
+| 1202 | 交换字符串中的元素 | 中 | 同集下标归组，组内排序重组字符串 |
+| 399 | 除法求值 | 中 | **带权并查集**：维护到根的比值，压缩时同步更新 |
+| 1579 | 保证图可完全遍历的最优移除边数 | 难 | 公共边先并；Alice / Bob 各一个并查集 |
+| 952 | 按公因数计算最大组件大小 | 难 | 质因子 → 首次出现的数合并，按根计数 |
+| 803 | 打砖块 | 难 | **逆向并查集**：删除倒序变添加，维护与「天花板」的连通 |
+| 765 | 情侣牵手 | 难 | 情侣对先并集，交换次数 = 对数 − 环数（分量思想） |
 
-    E --> E1["Kruskal算法核心"]
-    E --> E2["图算法基础数据结构"]
-    E --> E3["编译器、网络、游戏等领域"]
+定位语：并查集是「动态连通性」的标准答案。两个常见变体：**带权并查集**（399，parent 边上带权值，压缩时累乘 / 累加）与**逆向并查集**（803，删点 / 删边题倒序做变加点）。MST 方向的并查集题（1584、1697、1631）见第 21 章题单。
 
-    style A fill:#ff9,stroke:#333,stroke-width:4px
-```
+### 6.2 习题快问快答（第四版编号）
 
-### 9.3 与其他数据结构的对比
+- **19.1-1** 按序处理 11 条边后（代码核对）：{a,e,h}、{b,d,f,g,i,j,k}、{c}。其中 (b,j)、(d,f)、(g,j) 处理时两端已同集，不触发 UNION。
+- **19.1-3** FIND-SET 恰被调用 $2|E|$ 次（每条边两次）；UNION 恰为 $|V| - k$ 次（k = 连通分量数）：每次有效 UNION 使集合数减 1，从 |V| 降到 k。
+- **19.2-2** 16 元素加权合并链表程序（代码核对）：FIND-SET(x2) = FIND-SET(x9) = x1；最终一条链 x1…x16。
+- **19.2-4** Figure 19.3 的序列改用加权合并：每次 UNION 只更新 1 个对象（被接的总是单元素链）⇒ 总时间 $\Theta(n)$（代码核对 n = 100 时共更新 99 次）。
+- **19.3-2** 非递归 FIND-SET：第一趟 while 循环沿 parent 走到根；第二趟从 x 再走一遍，沿途全部改指根。
+- **19.3-3** 仅按秩合并的 $\Omega(m \lg n)$ 序列：先用 $2^k$ 个元素并出 rank k 的树（两两等秩相并，形如二项树），再对最深节点反复 FIND-SET，每次 $\Theta(k) = \Theta(\lg n)$。
+- **19.4-2** rank ≤ $\lfloor \lg n \rfloor$：归纳——rank k 的根子树至少 $2^k$ 个节点（只有两棵 rank k−1 相并才产生 rank k，节点数翻倍）。
+- **19.4-3** 存 rank 需要 $\Theta(\lg \lg n)$ 位（rank 本身只有 $\lfloor \lg n \rfloor$ 量级）。
 
-| 数据结构 | 查找 | 插入/合并 | 适用场景 |
-|---------|-----|----------|---------|
-| 并查集 | O(α(n)) | O(α(n)) | 元素分组、合并查询 |
-| 平衡二叉搜索树 | O(log n) | O(log n) | 有序数据、范围查询 |
-| 哈希表 | O(1) | O(1) | 快速查找 |
-| 链表 | O(1) | O(1) | 顺序访问 |
+### 6.3 思考题选
+
+- **19-1 离线最小值**：已知完整操作序列，求每次 EXTRACT-MIN 的返回值。实例 4, 8, E, 3, E, 9, 2, 6, E, E, E, 1, 7, E, 5 的答案 extracted = [4, 3, 2, 6, 8, 1]（堆模拟核对）。高效做法：按 E 把插入分段为 $K_1, \dots, K_{m+1}$，从 1 到 n 扫，i 属于哪个 $K_j$ 就是第 j 次 E 的答案，随后把 $K_j$ 并入下一个还存在的集合——用并查集维护「下一个集合」⇒ $O(m\,\alpha(n))$。
+- **19-2 深度确定**：给并查集加「伪距离」v.d（到父节点的距离），使根路径上 d 之和 = 树中真实深度。FIND-DEPTH 即带权路径压缩（压缩时把 v.d 累加成到根的距离）；GRAFT(r, v) 把 r 所在树的根挂到 v 下并设好根的 d ⇒ 依旧 $O(m\,\alpha(n))$。这是**带权并查集**的原型（对应 LeetCode 399）。
+- **19-3 Tarjan 离线 LCA**：对树做一趟 DFS，u 的子树处理完后染黑 u；对每个查询对 {u, v}，当 u 染黑且 v 已黑时，答案 = FIND-SET(v).ancestor（每个集合的 ancestor 维护「已访问部分与未访问部分的分界点」）⇒ $O((n + |P|)\,\alpha(n))$。所有查询离线已知时优于逐对在线求 LCA。
+
+### 6.4 章末注记
+
+并查集分析史就是摊还分析的进化史：Hopcroft–Ullman 最早证出 $O(m \lg^* n)$；Tarjan 给出紧界 $O(m\,\alpha(m,n))$，并证明在一定技术条件下 $\Omega(m\,\alpha(m,n))$ 是**下界**——按秩 + 路径压缩渐近最优；Fredman–Saks 把下界推广到更一般的模型（每次最坏需访问 $\Omega(m\,\alpha(m,n))$ 个 $(\lg n)$ 位字）。Tarjan–van Leeuwen 讨论过一趟完成的路径压缩变体（常数更优）；Goel 等证明**随机**把一个根挂到另一个根下，渐近与按秩合并相同；Gabow–Tarjan 证明特定应用（离线场景）可做到真 $O(m)$。
 
 ---
 
 ## 参考资料
 
-- Cormen, T. H., Leiserson, C. E., Rivest, R. L., & Stein, C. (2009). *Introduction to Algorithms* (3rd ed.). MIT Press.
-- Chapter 19: Data Structures for Disjoint Sets, pp. 683-714
-- Tarjan, R. E. (1975). "Efficiency of a Good But Not Linear Set Union Algorithm". Journal of the ACM.
+- Cormen, T. H., Leiserson, C. E., Rivest, R. L., & Stein, C. (2022). *Introduction to Algorithms* (4th ed.). MIT Press. Chapter 19: Data Structures for Disjoint Sets, pp. 520–545.
+- Tarjan, R. E. (1975). "Efficiency of a Good But Not Linear Set Union Algorithm". *Journal of the ACM*, 22(2), 215–225.
