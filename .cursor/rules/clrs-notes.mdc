@@ -1,0 +1,16 @@
+---
+description: 生成/优化/审阅《算法导论》章节深度版笔记时必须遵循的流程（触发词：生成第N章、优化第N章、审阅第N章）
+globs: IntroductionToAlgorithms/**/*.md
+alwaysApply: false
+---
+
+# 《算法导论》章节笔记生成流程
+
+用户说「生成 / 优化 / 审阅第 N 章」时，**唯一权威流程**在 `IntroductionToAlgorithms/Plan.md`，先完整读它再动手。要点速记：
+
+1. **Step 0 提原书**：`pdftotext -f <起> -l <止> /Users/zy/Downloads/IntroductiontoAlgorithms4th.pdf out.txt`（PDF 页 = 书页 + 22），通读第四版原文后再动笔；伪代码签名、图例、习题编号一律以第四版为准。
+2. **有旧笔记**：列「笔记 vs 原书」差异清单，修错、删跑题内容；**无旧笔记**（第 26–35 章）：按 Plan.md 第四节骨架直接撰写，产出 `ChapterNN_章名_深度版.md`。
+3. **骨架**：开篇定位 → 核心思想 → 各算法（直觉→示意图→代码→复杂度→LeetCode 标注）→ Java+Python 双实现（0-indexed）→ 复杂度速查+易混点 → LeetCode 题单+习题快问快答。
+4. **Mermaid**：遵守 Plan.md 第二节配色表与语法红线（每节点 `color:#1f1f1f`、subgraph 用 50 色阶浅底、长标签 `<br/>` 换行、不画纯思维导图）。
+5. **最终关卡（必做）**：笔记代码块原样抽出 `javac && java` / `python3` 实跑 + 随机对拍；全部 mermaid 块用 `mermaid.parse` 验证可解析。
+6. 完成后删除被替换的旧版文件（如有）。
