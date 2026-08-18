@@ -685,7 +685,7 @@ d 大则「上浮便宜、下沉贵」——DECREASE-KEY / INSERT 密集而 EXTR
 - 判存性：从**右上角**出发，大了左移、小了下移，**O(m + n)**。
 - 用 n×n Young 氏矩阵可对 n² 个数排序：**O(n³)**（n² 次 O(n+n) 的 EXTRACT-MIN）。
 
-**章末注记（历史与前沿）**：堆排序由 **Williams** 发明（他同时给出了堆实现优先队列的方法）；线性时间建堆 BUILD-MAX-HEAP 由 **Floyd** 提出。若 key 有整数等特殊结构，优先队列还能更快：**斐波那契堆**把 INSERT / DECREASE-KEY 做到摊还 O(1)（第 16 章）；key 取自 {0, 1, …, n−1} 时 **van Emde Boas 树**各操作 O(lg lg n)；EXTRACT-MIN 输出单调递增的场景（如 Dijkstra、离散事件模拟）可用 **radix heap** 把 DECREASE-KEY 做到 O(1)。
+**章末注记（历史与前沿）**：堆排序由 **Williams** 发明（他同时给出了堆实现优先队列的方法）；线性时间建堆 BUILD-MAX-HEAP 由 **Floyd** 提出。若 key 有整数等特殊结构，优先队列还能更快：**斐波那契堆**把 INSERT / DECREASE-KEY 做到摊还 O(1)（第四版已删章；第 16 章只讲摊还工具）；key 取自 {0, 1, …, n−1} 时 **van Emde Boas 树**各操作 O(lg lg n)（同样已删章）；EXTRACT-MIN 输出单调递增的场景（如 Dijkstra、离散事件模拟）可用 **radix heap** 把 DECREASE-KEY 做到 O(1)。
 
 ---
 

@@ -400,7 +400,7 @@ def insertion_sort(a):
 
 
 def merge_sort(a, p=0, r=None):
-    """归并排序：原地、稳定。时间 O(n log n)，额外空间 O(n)。"""
+    """归并排序：稳定。时间 O(n log n)，额外空间 O(n)（不是原地）。"""
     if r is None:
         r = len(a) - 1
     if p >= r:

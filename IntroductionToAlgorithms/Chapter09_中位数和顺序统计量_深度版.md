@@ -94,9 +94,9 @@ RANDOMIZED-SELECT 最坏 Θ(n²)。实时系统、对抗环境下要**保证**�
 x 是「中位数的中位数」。至少**一半组**的中位数 ≥ x；每个这样的组里有 3 个元素 ≥ 其组中位数 ≥ x。所以：
 
 ```
-≥ 3·⌊g/2⌋ ≥ 3g/2 ≥ 3n/10 个元素 ≥ x    （g = ⌈n/5⌉ 为组数）
-同理 ≥ 3n/10 个元素 ≤ x
-→ 分区后，两侧最多 7n/10 个元素
+≥ 3(⌊g/2⌋ + 1) ≥ 3g/2 个元素 ≥ x    （g = ⌈n/5⌉；含 x 自己那一组）
+同理 ≥ 3g/2 ≥ 3n/10 个元素 ≤ x
+→ 低侧至多 5g − 3g/2 = 7g/2 ≤ 7n/10
 ```
 
 （这是「7n/10」的来源，Figure 9.3 可视化：每个组是一列，中位数在中间行，x 把组中位数分两侧。）
@@ -313,7 +313,7 @@ if __name__ == "__main__":
 | [215. 数组中的第 K 个最大元素](https://leetcode.cn/problems/kth-largest-element-in-an-array/) | 中 | quickselect | RANDOMIZED-SELECT（第 n−k 小） |
 | [347. 前 K 个高频元素](https://leetcode.cn/problems/top-k-frequent-elements/) | 中 | quickselect / 桶 | 第 k 频 |
 | [973. 最接近原点的 K 个点](https://leetcode.cn/problems/k-closest-points-to-origin/) | 中 | quickselect | 第 k 近 |
-| [4. 寻找两个正序数组的中位数](https://leetcode.cn/problems/median-of-two-sorted-arrays/) | 困 | 二分 | 对应习题 9.3-8 |
+| [4. 寻找两个正序数组的中位数](https://leetcode.cn/problems/median-of-two-sorted-arrays/) | 困 | 二分 | 对应习题 9.3-10 |
 | [480. 滑动窗口中位数](https://leetcode.cn/problems/sliding-window-median/) | 困 | 双堆 / 双指针 | 中位数维护 |
 
 ### 6.2 习题快问快答（第四版编号）
@@ -323,16 +323,18 @@ if __name__ == "__main__":
 - **9.2-3**　把 RANDOMIZED-SELECT 改成**迭代**版（while 循环，每次只更新 lo/hi 一侧）——见上面 Java/Python 代码。
 - **9.2-4**　最坏情况下 RANDOMIZED-SELECT 的比较次数上界是 Θ(n²)（构造性：每次随机选到最差 pivot 的概率虽低但路径存在）。
 - **9.3-3**　如何让快排最坏 Θ(n lg n)？用 SELECT 找**精确中位数**作 pivot，每次分区严格对半：T(n) = 2T(n/2) + Θ(n)（SELECT 的 Θ(n)）= Θ(n lg n)。
-- **9.3-5**　假设有一个「Θ(n) 返回中位数」的黑盒，用它做快排的 pivot → 快排最坏 Θ(n lg n)；用它做选择 → Θ(n)。
-- **9.3-6**　找 k 个**分位数**（把有序集等分成 k 段的 k−1 个切点）：Θ(n + k lg n)，用 k−1 次 SELECT。
-- **9.3-8**　两个等长有序数组找中位数：Θ(lg n) 二分（LC 4）。
-- **9.3-9**　**中位数选址**：n 个点在直线上，求一点使距离和最小 → 选**中位数**位置（中位数最小化 L1 距离和，均值最小化 L2）。这是「为什么中位数比均值鲁棒」的几何注脚。
+- **9.3-5**　5 个元素的中位数只需 **6 次比较**（先 4 次排出两对大小，再比较两个较大者，最后在剩下 3 个候选里找中位数）。
+- **9.3-6**　有一个「最坏 Θ(n) 返回中位数」的黑盒 → 用它做 pivot 即可在 Θ(n) 内找任意第 k 小（分区后只递归一侧）。
+- **9.3-7**　东西向主管道 + 各油井南北支线：最优位置是 y 坐标的**中位数**（L1），SELECT 线性时间。
+- **9.3-8**　找 k 个**分位数**（把有序集等分成 k 段的 k−1 个切点）：**O(n lg k)**——SELECT 出中间那个分位数，再对左右两半递归（不是 k−1 次独立 SELECT，那会变成 Θ(kn)）。
+- **9.3-9**　n 个数里离中位数最近的 k 个：先 SELECT 出中位数，再按 |x−m| 做第 k 小，Θ(n)。
+- **9.3-10**　两个等长有序数组找中位数：Θ(lg n) 二分（LC 4）。
 
 ### 6.3 思考题要点
 
 - **9-1 Largest i numbers**：找最大 i 个数的期望时间——找到第 (n−i) 小需 Θ(n)，再在其中找前 i 大 Θ(i lg i)（若要排序）。
 - **9-3 Weighted median**：带权中位数（权重之和的分位点），仍可用 SELECT 思路 Θ(n)。
-- **9-4 Small order statistics**：找第 k 小（k 很小）时，堆方法 Θ(k + n lg k) 可能优于 SELECT 的 Θ(n)。
+- **9-4 Small order statistics**：分析找第 i 小的最坏比较次数 U_i(n) 的递推上界；i 固定时比完整 SELECT 的常数更好。不是「用大小为 k 的堆 Θ(k + n lg k)」。
 - **9-6 Select with groups of 3**：分组 3 时递归式 1/3 + 2/3 = 1 不收敛到线性——证明 5 是让 SELECT 保持线性的最小分组。
 
 ### 章末注记
